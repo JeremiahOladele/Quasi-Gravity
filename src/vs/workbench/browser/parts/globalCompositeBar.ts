@@ -860,7 +860,8 @@ function simpleActivityContextMenuActions(storageService: IStorageService, isAcc
 }
 
 export function isAccountsActionVisible(storageService: IStorageService): boolean {
-	return storageService.getBoolean(AccountsActivityActionViewItem.ACCOUNTS_VISIBILITY_PREFERENCE_KEY, StorageScope.PROFILE, true);
+	// QUASI: strip account functionality — hide the Accounts icon in the activity bar and title bar by default (no accounts/sign-in).
+	return storageService.getBoolean(AccountsActivityActionViewItem.ACCOUNTS_VISIBILITY_PREFERENCE_KEY, StorageScope.PROFILE, false);
 }
 
 function setAccountsActionVisible(storageService: IStorageService, visible: boolean) {
