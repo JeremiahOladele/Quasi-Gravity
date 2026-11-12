@@ -2375,7 +2375,8 @@ configurationRegistry.registerConfiguration({
 		[ChatAIDisabledSettingId]: {
 			type: 'boolean',
 			description: nls.localize('chat.disableAIFeatures', "Disable and hide built-in AI features provided by GitHub Copilot, including chat and inline suggestions."),
-			default: false,
+			// QUASI: strip account functionality — default built-in Copilot/chat AI features to off (no accounts/sign-in).
+			default: true,
 			scope: ConfigurationScope.WINDOW,
 		},
 		[ChatConfiguration.CopilotCliCommandEnabled]: {
