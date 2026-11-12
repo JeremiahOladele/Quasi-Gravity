@@ -324,6 +324,8 @@ const nativeExtensions = [
 
 const excludedExtensions = [
 	'copilot',
+	// QUASI: strip account functionality — do not ship the GitHub authentication provider (no accounts/sign-in).
+	'github-authentication',
 	'vscode-api-tests',
 	'vscode-colorize-tests',
 	'vscode-colorize-perf-tests',
