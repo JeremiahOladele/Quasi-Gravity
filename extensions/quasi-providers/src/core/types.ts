@@ -68,7 +68,7 @@ export type ChatChunk =
 	| { type: 'text'; text: string }
 	| { type: 'toolCall'; call: ToolCall }
 	| { type: 'done'; usage?: { inputTokens?: number; outputTokens?: number } }
-	| { type: 'error'; message: string };
+	| { type: 'error'; message: string; status?: number };
 
 export interface Provider {
 	readonly config: ProviderConfig;

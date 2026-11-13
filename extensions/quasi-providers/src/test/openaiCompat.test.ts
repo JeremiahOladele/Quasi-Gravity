@@ -128,7 +128,14 @@ describe('OpenAICompatProvider', () => {
 		stubFetch(sseResponse('{"error":{"message":"bad key"}}', 401));
 		const provider = new OpenAICompatProvider(makeConfig(), async () => undefined);
 		const out = await collectChat(provider, { model: 'm', messages: [{ role: 'user', content: 'hi' }] });
-		assert.deepStrictEqual(out, [{ type: 'error', message: 'HTTP 401: {"error":{"message":"bad key"}}' }]);
+		assert.deepStrictEqual(out, [{ type: 'error', message: 'HTTP 401: {"error":{"message":"bad key"}}', status: 401 }]);
+	});
+
+	it('yields an error chunk on 403', async () => {
+		stubFetch(sseResponse('forbidden', 403));
+		const provider = new OpenAICompatProvider(makeConfig(), async () => undefined);
+		const out = await collectChat(provider, { model: 'm', messages: [{ role: 'user', content: 'hi' }] });
+		assert.deepStrictEqual(out, [{ type: 'error', message: 'HTTP 403: forbidden', status: 403 }]);
 	});
 
 	it('yields an error chunk on 429', async () => {
@@ -136,7 +143,7 @@ describe('OpenAICompatProvider', () => {
 		const provider = new OpenAICompatProvider(makeConfig(), async () => undefined);
 		const out = await collectChat(provider, { model: 'm', messages: [{ role: 'user', content: 'hi' }] });
 		assert.strictEqual(out.length, 1);
-		assert.deepStrictEqual(out[0], { type: 'error', message: 'HTTP 429: rate limited' });
+		assert.deepStrictEqual(out[0], { type: 'error', message: 'HTTP 429: rate limited', status: 429 });
 	});
 
 	it('yields an error chunk on network failure', async () => {

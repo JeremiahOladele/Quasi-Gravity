@@ -96,7 +96,7 @@ export class OpenAICompatProvider implements Provider {
 		}
 
 		if (!res.ok) {
-			yield { type: 'error', message: redactSecrets(await responseMessage(res), key) };
+			yield { type: 'error', message: redactSecrets(await responseMessage(res), key), status: res.status };
 			return;
 		}
 
