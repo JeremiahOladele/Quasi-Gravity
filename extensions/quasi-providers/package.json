@@ -24,7 +24,8 @@
     "onCommand:quasi.provider.clearActiveModel",
     "onCommand:quasi.provider.test",
     "onCommand:quasi.discovery.detectLocalModels",
-    "onCommand:quasi.settings.export"
+    "onCommand:quasi.settings.export",
+    "onCommand:quasi.settings.import"
   ],
   "contributes": {
     "commands": [
@@ -81,6 +82,11 @@
       {
         "command": "quasi.settings.export",
         "title": "Quasi: Export Settings",
+        "category": "Quasi"
+      },
+      {
+        "command": "quasi.settings.import",
+        "title": "Quasi: Import Settings",
         "category": "Quasi"
       }
     ],

@@ -79,6 +79,6 @@ export function activate(context: vscode.ExtensionContext): void {
 
 	registerCommands(context, { keyStore, statusBar });
 	registerDiscovery(context);
-	registerExportImport(context);
+	registerExportImport(context, { keyStore, statusBar });
 	void maybeAutoDiscover(context);
 }
