@@ -131,8 +131,9 @@ These apply to the product we are building, and to how you behave while building
 
 0. Strip built-in account functionality (DONE)
 1. Provider layer: BYO API keys, local waypoints, first-run defaults, exportable
-   settings (CURRENT — M5 done, see `docs/PHASE1.md`)
+   settings (DONE, see `docs/PHASE1.md`)
 2. Agent loop and chat panel (built-in extension, web-compatible design)
+   (CURRENT, see `docs/PHASE2.md`)
 3. Checkpoints (hidden git snapshots, stored on a private ref)
 4. Artifacts (plans, task lists, screenshots, with inline comments)
 5. Accounts server and `quasi-accounts` extension (invite-only)
@@ -178,9 +179,9 @@ removed. Our replacement is file-based and needs no server.
   `${workspaceFolder}`-style variables or relative paths where a path is needed.
 - Encoding: UTF-8, LF line endings, on every platform.
 
-### Current task: Phase 1, provider layer
+### Current task: Phase 2, agent loop and chat panel
 
-See `docs/PHASE1.md`. Work one milestone at a time. Plan first and wait for
+See `docs/PHASE2.md`. Work one milestone at a time. Plan first and wait for
 approval before editing.
 
 ## Web compatibility (future web version)
