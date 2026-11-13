@@ -87,7 +87,13 @@ export function createReadTools(rootUri: vscode.Uri): ToolDef[] {
 			const candidate = typeof args.path === 'string' ? args.path : '';
 			const resolution = resolveSandboxPath(rootPath, candidate, CASE_INSENSITIVE);
 			const absolute = absoluteFor(rootPath, candidate);
-			if (resolution.outsideWorkspace || await resolvesOutside(absolute)) {
+			if (resolution.outsideWorkspace) {
+				// Relative `..` escapes are refused in run(); absolute outside paths need approval.
+				return resolution.reason === 'path escapes the workspace'
+					? undefined
+					: { toolName: 'read_file', reason: 'outside-workspace', detail: absolute };
+			}
+			if (await resolvesOutside(absolute)) {
 				return { toolName: 'read_file', reason: 'outside-workspace', detail: absolute };
 			}
 			if (resolution.ok && isSensitivePath(resolution.relativePath ?? '')) {
@@ -98,6 +104,9 @@ export function createReadTools(rootUri: vscode.Uri): ToolDef[] {
 		run: async args => {
 			const candidate = typeof args.path === 'string' ? args.path : '';
 			const resolution = resolveSandboxPath(rootPath, candidate, CASE_INSENSITIVE);
+			if (resolution.outsideWorkspace && resolution.reason === 'path escapes the workspace') {
+				return errorResult('Path escapes the workspace.');
+			}
 			const absolute = absoluteFor(rootPath, candidate);
 			try {
 				const stat = await vscode.workspace.fs.stat(vscode.Uri.file(absolute));
@@ -146,7 +155,12 @@ export function createReadTools(rootUri: vscode.Uri): ToolDef[] {
 			const candidate = typeof args.path === 'string' && args.path.length > 0 ? args.path : '.';
 			const resolution = resolveSandboxPath(rootPath, candidate, CASE_INSENSITIVE);
 			const absolute = absoluteFor(rootPath, candidate);
-			if (resolution.outsideWorkspace || await resolvesOutside(absolute)) {
+			if (resolution.outsideWorkspace) {
+				return resolution.reason === 'path escapes the workspace'
+					? undefined
+					: { toolName: 'list_dir', reason: 'outside-workspace', detail: absolute };
+			}
+			if (await resolvesOutside(absolute)) {
 				return { toolName: 'list_dir', reason: 'outside-workspace', detail: absolute };
 			}
 			return undefined;
@@ -154,6 +168,9 @@ export function createReadTools(rootUri: vscode.Uri): ToolDef[] {
 		run: async args => {
 			const candidate = typeof args.path === 'string' && args.path.length > 0 ? args.path : '.';
 			const resolution = resolveSandboxPath(rootPath, candidate, CASE_INSENSITIVE);
+			if (resolution.outsideWorkspace && resolution.reason === 'path escapes the workspace') {
+				return errorResult('Path escapes the workspace.');
+			}
 			const absolute = absoluteFor(rootPath, candidate);
 			try {
 				const entries = await vscode.workspace.fs.readDirectory(vscode.Uri.file(absolute));
