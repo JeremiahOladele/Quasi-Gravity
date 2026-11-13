@@ -5,7 +5,7 @@
 
 import { redactSecrets } from '../redact';
 import { parseSseEvents } from '../sse';
-import { ChatChunk, ChatRequest, KeyResolver, ModelInfo, Provider, ProviderConfig, ProviderError, normalizeBaseUrl } from '../types';
+import { ChatChunk, ChatMessage, ChatRequest, KeyResolver, ModelInfo, Provider, ProviderConfig, ProviderError, normalizeBaseUrl } from '../types';
 
 interface OpenAIModelListResponse {
 	data?: Array<{ id?: string; name?: string }>;
@@ -75,7 +75,7 @@ export class OpenAICompatProvider implements Provider {
 		const key = await this.resolveKey();
 		const body = {
 			model: req.model,
-			messages: req.messages,
+			messages: toWireMessages(req.messages),
 			...(req.tools && req.tools.length > 0 ? { tools: req.tools } : {}),
 			...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
 			...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
@@ -163,6 +163,23 @@ export class OpenAICompatProvider implements Provider {
 			return { ok: false, message: errorMessage(err) };
 		}
 	}
+}
+
+interface WireMessage {
+	readonly role: string;
+	readonly content: string;
+	readonly tool_calls?: unknown;
+	readonly tool_call_id?: string;
+}
+
+/** Map internal conversation messages to the OpenAI wire format for tool turns. */
+function toWireMessages(messages: ReadonlyArray<ChatMessage>): WireMessage[] {
+	return messages.map(message => ({
+		role: message.role,
+		content: message.content,
+		...(message.toolCalls && message.toolCalls.length > 0 ? { tool_calls: message.toolCalls } : {}),
+		...(message.toolCallId ? { tool_call_id: message.toolCallId } : {})
+	}));
 }
 
 async function* readBodyChunks(body: ReadableStream<Uint8Array>): AsyncIterable<Uint8Array> {

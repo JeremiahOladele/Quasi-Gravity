@@ -176,6 +176,24 @@ describe('OpenAICompatProvider', () => {
 		assert.strictEqual(result.ok, false);
 		assert.strictEqual(result.message, 'down');
 	});
+
+	it('serializes tool turns with OpenAI wire field names', async () => {
+		stubFetch(sseResponse('data: [DONE]\n\n'));
+		const provider = new OpenAICompatProvider(makeConfig(), async () => undefined);
+		await collectChat(provider, {
+			model: 'm',
+			messages: [
+				{ role: 'user', content: 'hi' },
+				{ role: 'assistant', content: '', toolCalls: [{ id: 'c1', type: 'function', function: { name: 'f', arguments: '{}' } }] },
+				{ role: 'tool', content: 'result', toolCallId: 'c1' }
+			]
+		});
+		const body = JSON.parse(String(calls[0].init.body));
+		assert.deepStrictEqual(body.messages[1].tool_calls, [{ id: 'c1', type: 'function', function: { name: 'f', arguments: '{}' } }]);
+		assert.strictEqual(body.messages[1].toolCalls, undefined);
+		assert.strictEqual(body.messages[2].tool_call_id, 'c1');
+		assert.strictEqual(body.messages[2].toolCallId, undefined);
+	});
 });
 
 describe('normalizeBaseUrl', () => {
