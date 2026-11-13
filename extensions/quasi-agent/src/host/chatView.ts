@@ -329,9 +329,17 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 	}
 
 	private postMarkdown(entry: AssistantEntry): void {
-		const blocks = parseMarkdown(entry.text).blocks;
+		const blocks = this.parseMarkdownForDisplay(entry.text);
 		entry.blocks = blocks;
 		this.post({ type: 'assistantMarkdown', messageId: entry.id, blocks });
+	}
+
+	private parseMarkdownForDisplay(input: string): MarkdownBlock[] {
+		const result = parseMarkdown(input);
+		if (!result.truncated) {
+			return result.blocks;
+		}
+		return [...result.blocks, { type: 'paragraph', children: [{ type: 'text', text: '[message too long to format]' }] }];
 	}
 
 	private flushMarkdown(entry: AssistantEntry | undefined): void {
@@ -437,7 +445,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			entries: this.entries.map(entry => {
 				if (entry.kind === 'assistant') {
 					if (entry.blocks.length === 0 && entry.text.length > 0) {
-						entry.blocks = parseMarkdown(entry.text).blocks;
+						entry.blocks = this.parseMarkdownForDisplay(entry.text);
 					}
 					return { kind: 'assistant', text: entry.text, id: entry.id, blocks: entry.blocks };
 				}
