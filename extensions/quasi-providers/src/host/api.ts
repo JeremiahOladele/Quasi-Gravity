@@ -5,6 +5,7 @@
 
 import * as vscode from 'vscode';
 import { CapabilityState } from '../core/capabilities';
+import { SafetyDefaults } from '../core/safetyDefaults';
 import { Capabilities, Provider } from '../core/types';
 
 export interface ActiveProviderInfo {
@@ -26,6 +27,8 @@ export interface QuasiProvidersApiV1 {
 	readonly version: 1;
 	getActive(): ActiveProviderInfo | undefined;
 	readonly onDidChangeActive: vscode.Event<void>;
+	/** Read-only, normalized device-local safety defaults. */
+	getSafetyDefaults(): SafetyDefaults;
 	/** Flips the status bar to "key rejected" when the reported provider is active. */
 	reportKeyRejected(providerId: string): void;
 }

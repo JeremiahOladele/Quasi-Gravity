@@ -14,7 +14,7 @@ import { registerExportImport } from './exportImport';
 import { providerFor } from './providerRuntime';
 import { registerSafetyCommand } from './safetyCommands';
 import { KeyStore, VscodeSecretBackend } from './secrets';
-import { readActiveModel, readActiveProviderId, readProviders } from './settings';
+import { readActiveModel, readActiveProviderId, readDefaults, readProviders } from './settings';
 import { StatusBar } from './statusBar';
 
 export function activate(context: vscode.ExtensionContext): QuasiProvidersApiV1 {
@@ -117,6 +117,7 @@ export function activate(context: vscode.ExtensionContext): QuasiProvidersApiV1 
 		version: 1,
 		getActive,
 		onDidChangeActive: onDidChangeActive.event,
+		getSafetyDefaults: () => readDefaults(),
 		reportKeyRejected: (providerId: string) => {
 			if (readActiveProviderId() === providerId) {
 				statusBar.setState('rejected');

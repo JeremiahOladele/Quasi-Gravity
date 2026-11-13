@@ -82,9 +82,20 @@ export interface ActiveProviderInfo {
 	readonly capabilityStates: { readonly tools: CapabilityState; readonly vision: CapabilityState };
 }
 
+export type TerminalPermission = 'always' | 'unlisted' | 'never';
+
+export interface SafetyDefaultsLike {
+	readonly permissions: {
+		readonly askBeforeTerminal: TerminalPermission;
+		readonly askBeforeWriteOutsideWorkspace: boolean;
+	};
+	readonly profile: string;
+}
+
 export interface ProvidersApiV1 {
 	readonly version: 1;
 	getActive(): ActiveProviderInfo | undefined;
 	readonly onDidChangeActive: EventLike<void>;
+	getSafetyDefaults(): SafetyDefaultsLike;
 	reportKeyRejected(providerId: string): void;
 }
