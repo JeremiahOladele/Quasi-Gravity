@@ -273,3 +273,4 @@ and should be done in later sessions:
   that reference its native binaries. Do this when CI is set up (the maintainer
   can only build Linux locally).
 - Replace the "Learn the Fundamentals" walkthrough with a Quasi-Gravity getting-started walkthrough in Phase 1.
+- Verify the Quasi chat with a local Ollama model (not tested in Phase 2 M1).
