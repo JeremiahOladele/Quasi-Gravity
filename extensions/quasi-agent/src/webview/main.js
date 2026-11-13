@@ -13,6 +13,9 @@
 
 	let streaming = false;
 	let errorActionKind = null;
+	let currentAssistantEl = null;
+	let lastToolEl = null;
+	const approvalCards = new Map();
 
 	function isHostFrame(message) {
 		if (!message || typeof message !== 'object' || typeof message.type !== 'string') {
@@ -29,6 +32,16 @@
 				return true;
 			case 'assistantError':
 				return typeof message.kind === 'string' && typeof message.message === 'string';
+			case 'toolCall':
+				return typeof message.name === 'string' && typeof message.arguments === 'string';
+			case 'toolResult':
+				return typeof message.name === 'string' && typeof message.summary === 'string' && typeof message.isError === 'boolean';
+			case 'approvalRequest':
+				return typeof message.id === 'string' && typeof message.toolName === 'string' && typeof message.detail === 'string' && (message.reason === 'sensitive-file' || message.reason === 'outside-workspace');
+			case 'approvalResolved':
+				return typeof message.id === 'string' && typeof message.approved === 'boolean';
+			case 'notice':
+				return typeof message.text === 'string';
 			case 'cleared':
 				return true;
 			case 'busy':
@@ -48,40 +61,143 @@
 		return entry;
 	}
 
+	function createToolEntry(name, args, summary, isError) {
+		const details = document.createElement('details');
+		details.className = 'entry tool' + (isError ? ' tool-error' : '');
+		const summaryEl = document.createElement('summary');
+		summaryEl.textContent = 'Tool: ' + name;
+		details.appendChild(summaryEl);
+		const argsEl = document.createElement('pre');
+		argsEl.textContent = args;
+		details.appendChild(argsEl);
+		const result = document.createElement('div');
+		result.className = 'tool-result';
+		result.textContent = summary;
+		details.appendChild(result);
+		return details;
+	}
+
 	function scrollToBottom() {
 		messagesEl.scrollTop = messagesEl.scrollHeight;
 	}
 
+	function resetPointers() {
+		currentAssistantEl = null;
+		lastToolEl = null;
+	}
+
 	function renderHistory(entries) {
 		messagesEl.textContent = '';
+		approvalCards.clear();
+		resetPointers();
 		for (const item of entries) {
-			if (!item || typeof item.text !== 'string') {
+			if (!item || typeof item.kind !== 'string') {
 				continue;
 			}
-			const kind = item.kind === 'assistant' || item.kind === 'notice' ? item.kind : 'user';
-			messagesEl.appendChild(createEntry(kind, item.text));
+			if (item.kind === 'tool') {
+				messagesEl.appendChild(createToolEntry(String(item.name || ''), String(item.args || ''), String(item.summary || ''), !!item.isError));
+			} else if (item.kind === 'user' || item.kind === 'assistant' || item.kind === 'notice') {
+				messagesEl.appendChild(createEntry(item.kind, String(item.text || '')));
+			}
 		}
 		scrollToBottom();
 	}
 
 	function appendDelta(text) {
-		let target = null;
-		for (let index = messagesEl.children.length - 1; index >= 0; index--) {
-			const child = messagesEl.children[index];
-			if (child.classList && child.classList.contains('assistant')) {
-				target = child;
-				break;
-			}
+		if (!currentAssistantEl) {
+			currentAssistantEl = createEntry('assistant', '');
+			messagesEl.appendChild(currentAssistantEl);
 		}
-		if (!target) {
-			target = createEntry('assistant', '');
-			messagesEl.appendChild(target);
-		}
-		const body = target.querySelector('.text');
+		const body = currentAssistantEl.querySelector('.text');
 		if (body) {
 			body.textContent += text;
 		}
 		scrollToBottom();
+	}
+
+	function showToolCall(name, args) {
+		currentAssistantEl = null;
+		lastToolEl = createToolEntry(name, args, 'running…', false);
+		messagesEl.appendChild(lastToolEl);
+		scrollToBottom();
+	}
+
+	function showToolResult(name, summary, isError) {
+		if (lastToolEl) {
+			lastToolEl.classList.toggle('tool-error', !!isError);
+			const result = lastToolEl.querySelector('.tool-result');
+			if (result) {
+				result.textContent = summary;
+			}
+			lastToolEl = null;
+		} else {
+			messagesEl.appendChild(createToolEntry(name, '', summary, !!isError));
+		}
+		scrollToBottom();
+	}
+
+	function showNotice(text) {
+		resetPointers();
+		messagesEl.appendChild(createEntry('notice', text));
+		scrollToBottom();
+	}
+
+	function showApproval(request) {
+		resetPointers();
+		const card = document.createElement('div');
+		card.className = 'entry approval';
+		const title = document.createElement('div');
+		title.className = 'approval-title';
+		title.textContent = request.reason === 'sensitive-file' ? 'Approval required: sensitive file' : 'Approval required: outside the workspace';
+		card.appendChild(title);
+		const detail = document.createElement('pre');
+		detail.className = 'approval-detail';
+		detail.textContent = request.detail + '\nTool: ' + request.toolName;
+		card.appendChild(detail);
+		const actions = document.createElement('div');
+		actions.className = 'approval-actions';
+		const allow = document.createElement('button');
+		allow.type = 'button';
+		allow.textContent = 'Allow';
+		const deny = document.createElement('button');
+		deny.type = 'button';
+		deny.textContent = 'Deny';
+		let resolved = false;
+		const finish = approved => {
+			if (resolved) {
+				return;
+			}
+			resolved = true;
+			allow.disabled = true;
+			deny.disabled = true;
+			card.classList.add(approved ? 'approved' : 'denied');
+			const status = document.createElement('div');
+			status.className = 'approval-status';
+			status.textContent = approved ? 'Allowed' : 'Denied';
+			card.appendChild(status);
+		};
+		allow.addEventListener('click', function () {
+			vscode.postMessage({ type: 'approvalResponse', id: request.id, approved: true });
+			finish(true);
+		});
+		deny.addEventListener('click', function () {
+			vscode.postMessage({ type: 'approvalResponse', id: request.id, approved: false });
+			finish(false);
+		});
+		actions.appendChild(allow);
+		actions.appendChild(deny);
+		card.appendChild(actions);
+		messagesEl.appendChild(card);
+		approvalCards.set(request.id, finish);
+		scrollToBottom();
+	}
+
+	function resolveApproval(id, approved) {
+		const finish = approvalCards.get(id);
+		if (finish) {
+			finish(approved);
+			approvalCards.delete(id);
+		}
 	}
 
 	function setStreaming(value) {
@@ -136,14 +252,32 @@
 				break;
 			case 'assistantDone':
 				setStreaming(false);
+				currentAssistantEl = null;
 				break;
 			case 'assistantError':
 				showError(message.kind, message.message);
 				setStreaming(false);
 				break;
+			case 'toolCall':
+				showToolCall(message.name, message.arguments);
+				break;
+			case 'toolResult':
+				showToolResult(message.name, message.summary, message.isError);
+				break;
+			case 'approvalRequest':
+				showApproval(message);
+				break;
+			case 'approvalResolved':
+				resolveApproval(message.id, message.approved);
+				break;
+			case 'notice':
+				showNotice(message.text);
+				break;
 			case 'cleared':
 				messagesEl.textContent = '';
 				clearError();
+				approvalCards.clear();
+				resetPointers();
 				break;
 			case 'busy':
 				setStreaming(message.value);

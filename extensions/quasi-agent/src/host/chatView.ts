@@ -4,16 +4,24 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as vscode from 'vscode';
-import { classifyChatError } from '../core/errors';
-import { dropEmptyAssistant, toProviderMessages } from '../core/messages';
-import { ActiveProviderInfo, ProvidersApiV1 } from '../core/providerApi';
+import { DEFAULT_MAX_ITERATIONS, runAgentLoop } from '../core/agentLoop';
+import { dropEmptyAssistant } from '../core/messages';
+import { ActiveProviderInfo, ChatMessage, ProvidersApiV1 } from '../core/providerApi';
+import { buildSystemPrompt } from '../core/prompt';
 import { parseWebviewToHost } from '../core/protocol';
+import { WebviewApprovalBroker } from './approvals';
 import { getProvidersApi } from './providerApi';
+import { createReadTools } from './toolsFs';
+import { detectShell, osName, resolveWorkspaceContext, today } from './workspace';
 
-type MutableEntry =
+type DisplayEntry =
 	| { kind: 'user'; text: string }
 	| { kind: 'assistant'; text: string }
-	| { kind: 'notice'; text: string };
+	| { kind: 'notice'; text: string }
+	| { kind: 'tool'; name: string; args: string; summary: string; isError: boolean };
+
+type AssistantEntry = Extract<DisplayEntry, { kind: 'assistant' }>;
+type ToolEntry = Extract<DisplayEntry, { kind: 'tool' }>;
 
 interface ProviderIdentity {
 	readonly kind: string;
@@ -25,24 +33,38 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 	private view: vscode.WebviewView | undefined;
 	private viewDisposables: vscode.Disposable[] = [];
 	private api: ProvidersApiV1 | undefined;
-	private apiRequested = false;
+	private apiResolved = false;
+	private apiDisposable: vscode.Disposable | undefined;
 
-	private entries: MutableEntry[] = [];
+	private entries: DisplayEntry[] = [];
+	private providerHistory: ChatMessage[] = [];
 	private streaming = false;
 	private abort: AbortController | undefined;
 	private generation = 0;
 	private lastIdentity: ProviderIdentity | undefined;
 	private pendingSwitchCheck = false;
+	private currentAssistant: AssistantEntry | undefined;
+	private lastToolEntry: ToolEntry | undefined;
+	private readonly refusedModels = new Set<string>();
+	private readonly shownNotices = new Set<string>();
+	private readonly approvals: WebviewApprovalBroker;
 
-	constructor(private readonly extensionUri: vscode.Uri) { }
+	constructor(private readonly extensionUri: vscode.Uri) {
+		this.approvals = new WebviewApprovalBroker(message => this.post(message));
+	}
 
 	resolveWebviewView(view: vscode.WebviewView): void {
 		this.view = view;
-		this.disposeView();
+		this.clearViewDisposables();
 		view.webview.options = { enableScripts: true, localResourceRoots: [this.extensionUri] };
 		view.webview.html = this.getHtml(view.webview);
 		this.viewDisposables.push(view.webview.onDidReceiveMessage(raw => this.onMessage(raw)));
-		this.viewDisposables.push(view.onDidDispose(() => this.disposeView()));
+		this.viewDisposables.push(view.onDidChangeVisibility(() => {
+			if (!view.visible) {
+				this.approvals.cancelAll();
+			}
+		}));
+		this.viewDisposables.push(view.onDidDispose(() => this.handleViewDisposed()));
 		void this.ensureApi();
 	}
 
@@ -50,12 +72,22 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		this.generation++;
 		this.stopInternal();
 		this.entries = [];
+		this.providerHistory = [];
+		this.currentAssistant = undefined;
+		this.lastToolEntry = undefined;
 		this.lastIdentity = undefined;
 		this.post({ type: 'cleared' });
 		this.postState();
 	}
 
-	private disposeView(): void {
+	private handleViewDisposed(): void {
+		this.abort?.abort();
+		this.abort = undefined;
+		this.approvals.cancelAll();
+		this.clearViewDisposables();
+	}
+
+	private clearViewDisposables(): void {
 		for (const disposable of this.viewDisposables) {
 			try {
 				disposable.dispose();
@@ -67,13 +99,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 	}
 
 	private async ensureApi(): Promise<void> {
-		if (this.apiRequested) {
-			return;
+		if (!this.apiResolved) {
+			this.apiResolved = true;
+			this.api = await getProvidersApi();
 		}
-		this.apiRequested = true;
-		this.api = await getProvidersApi();
-		if (this.api) {
-			this.viewDisposables.push(this.api.onDidChangeActive(() => this.handleActiveChanged()));
+		if (this.api && !this.apiDisposable) {
+			this.apiDisposable = this.api.onDidChangeActive(() => this.handleActiveChanged());
 		}
 	}
 
@@ -95,6 +126,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			case 'newChat':
 				this.newChat();
 				break;
+			case 'approvalResponse':
+				this.approvals.resolve(message.id, message.approved);
+				break;
 			case 'addProvider':
 				void vscode.commands.executeCommand('quasi.provider.quickAdd');
 				break;
@@ -114,6 +148,18 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		}
 		this.postHistory();
 		this.postState();
+		this.notifyWorkspaceChanged();
+	}
+
+	/** Called when trust or workspace folders change. */
+	notifyWorkspaceChanged(): void {
+		const workspace = resolveWorkspaceContext();
+		if (workspace.disabledReason) {
+			this.maybeNotice(`Tools unavailable: ${workspace.disabledReason}. Chatting without tools.`);
+		} else if (workspace.multiRoot) {
+			this.maybeNotice(`More than one folder is open. Tools only see '${workspace.rootName ?? 'the first folder'}'.`);
+		}
+		this.postState();
 	}
 
 	private async send(text: string): Promise<void> {
@@ -126,11 +172,38 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			this.post({ type: 'assistantError', kind: 'no-model', message: 'No active model. Add a provider or pick a model.' });
 			return;
 		}
-
 		this.noteProviderSwitch(active);
+
+		const workspace = resolveWorkspaceContext();
+		const rootTools = workspace.rootUri && workspace.capabilities.has('fs.read') ? createReadTools(workspace.rootUri) : [];
+		const refused = this.refusedModels.has(`${active.providerId}:${active.model}`);
+		const toolSupport = refused ? 'unsupported' as const : active.capabilityStates.tools;
+		const tools = toolSupport === 'unsupported' ? [] : rootTools;
+		const toolsDisabledReason = tools.length > 0
+			? undefined
+			: workspace.disabledReason
+			?? (toolSupport === 'unsupported'
+				? (refused ? 'this model rejected tools earlier in this session' : 'this model does not support tools')
+				: 'no tools are available');
+		if (toolsDisabledReason) {
+			this.maybeNotice(`Tools unavailable: ${toolsDisabledReason}. Chatting without tools.`);
+		}
+
+		const systemPrompt = buildSystemPrompt({
+			date: today(),
+			os: osName(),
+			shell: detectShell(),
+			workspaceName: workspace.rootName ?? 'workspace',
+			tools: tools.map(tool => tool.name),
+			toolsDisabledReason
+		});
+		if (workspace.multiRoot) {
+			this.maybeNotice(`More than one folder is open. Tools only see '${workspace.rootName ?? 'the first folder'}'.`);
+		}
+
 		this.entries.push({ kind: 'user', text });
-		const assistant: MutableEntry = { kind: 'assistant', text: '' };
-		this.entries.push(assistant);
+		this.currentAssistant = undefined;
+		this.lastToolEntry = undefined;
 		this.postHistory();
 
 		const generation = ++this.generation;
@@ -139,47 +212,63 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		this.setStreaming(true);
 
 		try {
-			const request = {
+			const result = await runAgentLoop({
+				provider: active.provider,
 				model: active.model,
-				messages: toProviderMessages(this.entries.slice(0, this.entries.length - 1)),
-			};
-			for await (const chunk of active.provider.chat(request, controller.signal)) {
-				if (controller.signal.aborted || generation !== this.generation) {
-					break;
-				}
-				if (chunk.type === 'text') {
-					assistant.text += chunk.text;
-					this.post({ type: 'assistantDelta', text: chunk.text });
-				} else if (chunk.type === 'done') {
-					this.post({ type: 'assistantDone', usage: chunk.usage });
-					break;
-				} else if (chunk.type === 'error') {
-					const classified = classifyChatError({ message: chunk.message, status: chunk.status });
-					if (classified.kind === 'key-rejected') {
-						this.api?.reportKeyRejected(active.providerId);
+				systemPrompt,
+				history: this.providerHistory,
+				userText: text,
+				tools,
+				toolSupport,
+				approvalBroker: this.approvals,
+				maxIterations: DEFAULT_MAX_ITERATIONS,
+				signal: controller.signal,
+				callbacks: {
+					onText: delta => {
+						if (generation === this.generation) {
+							this.onText(delta);
+						}
+					},
+					onToolCall: (name, argsText) => {
+						if (generation === this.generation) {
+							this.onToolCall(name, argsText);
+						}
+					},
+					onToolResult: (name, summary, isError) => {
+						if (generation === this.generation) {
+							this.onToolResult(name, summary, isError);
+						}
+					},
+					onNotice: notice => {
+						if (generation === this.generation) {
+							this.onNotice(notice);
+						}
+					},
+					onError: (kind, message) => {
+						if (generation === this.generation) {
+							if (kind === 'key-rejected') {
+								this.api?.reportKeyRejected(active.providerId);
+							}
+							this.post({ type: 'assistantError', kind, message });
+						}
+					},
+					onDone: () => { },
+					onToolsRejected: () => {
+						this.refusedModels.add(`${active.providerId}:${active.model}`);
 					}
-					this.post({ type: 'assistantError', kind: classified.kind, message: classified.message });
-					break;
 				}
-				// toolCall chunks are ignored in M1 (no tools yet)
-			}
-		} catch (err) {
-			if (!controller.signal.aborted && generation === this.generation) {
-				const status = err && typeof err === 'object' && typeof (err as { status?: unknown }).status === 'number'
-					? (err as { status: number }).status
-					: undefined;
-				// Never forward the raw error text/object; classify into a safe message.
-				const classified = classifyChatError({ message: '', status });
-				this.post({ type: 'assistantError', kind: classified.kind, message: classified.message });
+			});
+			if (generation === this.generation) {
+				this.providerHistory = result.history;
 			}
 		} finally {
 			if (generation === this.generation) {
 				this.abort = undefined;
 				this.setStreaming(false);
-				// Error or Stop before any text: drop the empty assistant bubble.
-				if (dropEmptyAssistant(this.entries, assistant)) {
+				if (this.currentAssistant && dropEmptyAssistant(this.entries, this.currentAssistant)) {
 					this.postHistory();
 				}
+				this.currentAssistant = undefined;
 				if (this.pendingSwitchCheck) {
 					this.pendingSwitchCheck = false;
 					const current = this.api?.getActive();
@@ -192,9 +281,50 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		}
 	}
 
+	private onText(delta: string): void {
+		if (!this.currentAssistant) {
+			this.currentAssistant = { kind: 'assistant', text: '' };
+			this.entries.push(this.currentAssistant);
+		}
+		this.currentAssistant.text += delta;
+		this.post({ type: 'assistantDelta', text: delta });
+	}
+
+	private onToolCall(name: string, argsText: string): void {
+		this.currentAssistant = undefined;
+		const entry: ToolEntry = { kind: 'tool', name, args: prettyJson(argsText), summary: '', isError: false };
+		this.entries.push(entry);
+		this.lastToolEntry = entry;
+		this.post({ type: 'toolCall', name, arguments: entry.args });
+	}
+
+	private onToolResult(name: string, summary: string, isError: boolean): void {
+		const entry = this.lastToolEntry;
+		if (entry && entry.name === name) {
+			entry.summary = summary;
+			entry.isError = isError;
+		}
+		this.lastToolEntry = undefined;
+		this.post({ type: 'toolResult', name, summary, isError });
+	}
+
+	private onNotice(text: string): void {
+		this.entries.push({ kind: 'notice', text });
+		this.post({ type: 'notice', text });
+	}
+
+	private maybeNotice(text: string): void {
+		if (this.shownNotices.has(text)) {
+			return;
+		}
+		this.shownNotices.add(text);
+		this.onNotice(text);
+	}
+
 	private stopInternal(): void {
 		this.abort?.abort();
 		this.abort = undefined;
+		this.approvals.cancelAll();
 		if (this.streaming) {
 			this.setStreaming(false);
 		}
@@ -231,15 +361,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		if (!hadConversation) {
 			return;
 		}
-		this.entries.push({
-			kind: 'notice',
-			text: `Switched to ${active.providerName} (${identity.kind}). Earlier messages in this chat will be sent to it.`,
-		});
-		this.postHistory();
+		this.onNotice(`Switched to ${active.providerName} (${identity.kind}). Earlier messages in this chat will be sent to it.`);
 	}
 
 	private postHistory(): void {
-		this.post({ type: 'history', entries: this.entries.map(entry => ({ kind: entry.kind, text: entry.text })) });
+		this.post({ type: 'history', entries: this.entries.map(entry => ({ ...entry })) });
 	}
 
 	private postState(): void {
@@ -247,7 +373,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		this.post({
 			type: 'state',
 			...(active ? { active: { providerName: active.providerName, model: active.model } } : {}),
-			streaming: this.streaming,
+			streaming: this.streaming
 		});
 	}
 
@@ -302,6 +428,16 @@ function providerIdentity(active: ActiveProviderInfo): ProviderIdentity {
 		host = undefined;
 	}
 	return { kind, host };
+}
+
+function prettyJson(text: string): string {
+	let pretty = text;
+	try {
+		pretty = JSON.stringify(JSON.parse(text), null, 2);
+	} catch {
+		// keep raw text
+	}
+	return pretty.length > 2000 ? `${pretty.slice(0, 2000)}…` : pretty;
 }
 
 function getNonce(): string {

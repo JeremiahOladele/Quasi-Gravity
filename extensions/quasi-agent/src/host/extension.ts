@@ -15,6 +15,8 @@ export function activate(context: vscode.ExtensionContext): void {
 		vscode.commands.registerCommand('quasi.chat.open', async () => {
 			await vscode.commands.executeCommand('workbench.view.extension.quasiChat');
 		}),
-		vscode.commands.registerCommand('quasi.chat.newChat', () => provider.newChat())
+		vscode.commands.registerCommand('quasi.chat.newChat', () => provider.newChat()),
+		vscode.workspace.onDidGrantWorkspaceTrust(() => provider.notifyWorkspaceChanged()),
+		vscode.workspace.onDidChangeWorkspaceFolders(() => provider.notifyWorkspaceChanged())
 	);
 }

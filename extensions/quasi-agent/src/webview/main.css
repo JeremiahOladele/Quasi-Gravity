@@ -131,3 +131,73 @@ button:disabled {
 button:not(:disabled):hover {
 	background: var(--vscode-button-hoverBackground);
 }
+
+details.entry.tool {
+	border: 1px solid var(--vscode-panel-border);
+	border-radius: 6px;
+	padding: 4px 8px;
+}
+
+details.entry.tool > summary {
+	cursor: pointer;
+	font-size: 0.9em;
+	opacity: 0.9;
+}
+
+details.entry.tool pre {
+	white-space: pre-wrap;
+	word-break: break-word;
+	margin: 6px 0 0;
+	max-height: 240px;
+	overflow: auto;
+}
+
+.entry.tool-error > summary {
+	color: var(--vscode-errorForeground);
+}
+
+.tool-result {
+	white-space: pre-wrap;
+	word-break: break-word;
+	margin-top: 6px;
+	opacity: 0.85;
+	font-size: 0.9em;
+}
+
+.entry.approval {
+	border: 1px solid var(--vscode-focusBorder);
+	border-radius: 6px;
+	padding: 8px;
+	gap: 6px;
+}
+
+.approval-title {
+	font-weight: 600;
+}
+
+.approval-detail {
+	white-space: pre-wrap;
+	word-break: break-word;
+	margin: 4px 0;
+	max-height: 200px;
+	overflow: auto;
+}
+
+.approval-actions {
+	display: flex;
+	gap: 6px;
+	margin-top: 4px;
+}
+
+.approval-status {
+	margin-top: 4px;
+	opacity: 0.8;
+}
+
+.entry.approval.approved {
+	border-color: var(--vscode-testing-iconPassed, #3fb950);
+}
+
+.entry.approval.denied {
+	border-color: var(--vscode-errorForeground);
+}
