@@ -92,7 +92,7 @@ export const providerPresets: ReadonlyArray<ProviderPreset> = [
 	{
 		id: 'ollama',
 		label: 'Ollama',
-		config: { name: 'Ollama', kind: 'local', apiType: 'openai-compat', baseUrl: 'http://localhost:11434/v1', requiresKey: false }
+		config: { name: 'Ollama', kind: 'local', apiType: 'ollama', baseUrl: 'http://localhost:11434/v1', requiresKey: false }
 	},
 	{
 		id: 'lmstudio',

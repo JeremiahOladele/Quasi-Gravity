@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { KeyResolver, Provider, ProviderConfig, ProviderError } from '../types';
+import { OllamaProvider } from './ollama';
 import { OpenAICompatProvider } from './openaiCompat';
 
 /** Build a `Provider` for the given configuration. Pure: no `vscode`/Node imports. */
@@ -11,6 +12,8 @@ export function createProvider(config: ProviderConfig, keyResolver: KeyResolver)
 	switch (config.apiType) {
 		case 'openai-compat':
 			return new OpenAICompatProvider(config, keyResolver);
+		case 'ollama':
+			return new OllamaProvider(config, keyResolver);
 		default:
 			throw new ProviderError(`Unsupported API type '${config.apiType}' (not implemented yet)`);
 	}

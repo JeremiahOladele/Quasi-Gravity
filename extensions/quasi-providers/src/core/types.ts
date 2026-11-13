@@ -75,6 +75,8 @@ export interface Provider {
 	listModels(signal?: AbortSignal): Promise<ModelInfo[]>;
 	chat(req: ChatRequest, signal?: AbortSignal): AsyncIterable<ChatChunk>;
 	testConnection(signal?: AbortSignal): Promise<{ ok: boolean; message: string; models?: ModelInfo[] }>;
+	/** Optional best-effort capability probe (e.g. Ollama `/api/show`). */
+	getModelCapabilities?(modelId: string, signal?: AbortSignal): Promise<Partial<Capabilities> | undefined>;
 }
 
 export type KeyResolver = (providerId: string) => Promise<string | undefined>;
