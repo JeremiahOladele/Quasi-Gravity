@@ -22,7 +22,8 @@
     "onCommand:quasi.provider.testConnection",
     "onCommand:quasi.provider.selectModel",
     "onCommand:quasi.provider.clearActiveModel",
-    "onCommand:quasi.provider.test"
+    "onCommand:quasi.provider.test",
+    "onCommand:quasi.discovery.detectLocalModels"
   ],
   "contributes": {
     "commands": [
@@ -69,6 +70,11 @@
       {
         "command": "quasi.provider.test",
         "title": "Quasi: Test Provider (dev)",
+        "category": "Quasi"
+      },
+      {
+        "command": "quasi.discovery.detectLocalModels",
+        "title": "Quasi: Detect Local Models",
         "category": "Quasi"
       }
     ],
@@ -143,6 +149,12 @@
           "scope": "application",
           "default": "",
           "description": "The active model id for the active provider."
+        },
+        "quasi.discovery.dontAskAgain": {
+          "type": "boolean",
+          "scope": "application",
+          "default": false,
+          "description": "When enabled, Quasi-Gravity does not automatically prompt to add discovered local model servers."
         }
       }
     }

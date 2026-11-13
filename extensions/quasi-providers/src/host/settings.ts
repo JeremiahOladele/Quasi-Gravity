@@ -43,3 +43,11 @@ export function readActiveModel(): string | undefined {
 export async function writeActiveModel(model: string | undefined): Promise<void> {
 	await configuration().update('activeModel', model ?? '', vscode.ConfigurationTarget.Global);
 }
+
+export function readDiscoveryDontAskAgain(): boolean {
+	return configuration().get<boolean>('discovery.dontAskAgain', false);
+}
+
+export async function writeDiscoveryDontAskAgain(value: boolean): Promise<void> {
+	await configuration().update('discovery.dontAskAgain', value, vscode.ConfigurationTarget.Global);
+}
