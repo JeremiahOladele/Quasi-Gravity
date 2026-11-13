@@ -183,8 +183,9 @@ export class WalkthroughsService extends Disposable implements IWalkthroughsServ
 
 		walkthroughs.forEach(async (category, index) => {
 
-			// QUASI: remove the "Get started with VS Code" walkthrough from the Welcome page (no accounts/sign-in onboarding).
-			if (category.id === 'Setup') {
+			// QUASI: remove the built-in "Get started with VS Code" and "Learn the
+			// Fundamentals" walkthroughs; we contribute a Quasi-Gravity walkthrough instead.
+			if (category.id === 'Setup' || category.id === 'Beginner') {
 				return;
 			}
 
