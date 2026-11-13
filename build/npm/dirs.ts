@@ -51,6 +51,7 @@ export const workspaceMembers = [
 	'extensions/npm',
 	'extensions/php-language-features',
 	'extensions/quasi-providers', // QUASI: built-in provider layer (Phase 1)
+	'extensions/quasi-agent', // QUASI: agent chat extension (Phase 2)
 	'extensions/references-view',
 	'extensions/search-result',
 	'extensions/simple-browser',

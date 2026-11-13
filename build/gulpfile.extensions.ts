@@ -71,6 +71,7 @@ const compilations = [
 	'extensions/npm/tsconfig.json',
 	'extensions/php-language-features/tsconfig.json',
 	'extensions/quasi-providers/tsconfig.json', // QUASI: built-in provider layer (Phase 1)
+	'extensions/quasi-agent/tsconfig.json', // QUASI: agent chat extension (Phase 2)
 	'extensions/references-view/tsconfig.json',
 	'extensions/search-result/tsconfig.json',
 	'extensions/simple-browser/tsconfig.json',

@@ -1,0 +1,21 @@
+{
+  "name": "quasi-agent",
+  "displayName": "Quasi Agent",
+  "description": "Agent chat for Quasi-Gravity.",
+  "version": "1.0.0",
+  "publisher": "quasi-gravity",
+  "license": "MIT",
+  "engines": {
+    "vscode": "*"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./out/host/extension.js",
+  "activationEvents": [],
+  "scripts": {
+    "compile": "gulp compile-extension:quasi-agent",
+    "watch": "gulp watch-extension:quasi-agent",
+    "test": "node ../../node_modules/mocha/bin/mocha \"out/test/**/*.test.js\""
+  }
+}
