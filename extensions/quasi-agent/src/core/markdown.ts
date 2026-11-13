@@ -653,3 +653,180 @@ function findEmphasisClose(text: string, start: number, marker: string, char: st
 	}
 	return -1;
 }
+
+interface ValidationCounter {
+	nodes: number;
+	blocks: number;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Structurally validate an AST received from another context. Enforces depth,
+ * block, node, string, and URL caps so the webview never renders a malicious
+ * or oversized tree.
+ */
+export function validateMarkdownBlocks(raw: unknown): MarkdownBlock[] | undefined {
+	if (!Array.isArray(raw) || raw.length > MAX_BLOCKS) {
+		return undefined;
+	}
+	const counter: ValidationCounter = { nodes: 0, blocks: 0 };
+	const blocks: MarkdownBlock[] = [];
+	for (const item of raw) {
+		const block = validateBlock(item, 0, counter);
+		if (!block) {
+			return undefined;
+		}
+		blocks.push(block);
+	}
+	return blocks;
+}
+
+function validateBlock(raw: unknown, depth: number, counter: ValidationCounter): MarkdownBlock | undefined {
+	if (!isRecord(raw) || depth > MAX_DEPTH || counter.blocks++ >= MAX_BLOCKS) {
+		return undefined;
+	}
+	switch (raw.type) {
+		case 'heading': {
+			if (typeof raw.level !== 'number' || raw.level < 1 || raw.level > 6) {
+				return undefined;
+			}
+			const children = validateInlineList(raw.children, depth + 1, counter);
+			return children ? { type: 'heading', level: raw.level, children } : undefined;
+		}
+		case 'paragraph': {
+			const children = validateInlineList(raw.children, depth, counter);
+			return children ? { type: 'paragraph', children } : undefined;
+		}
+		case 'code': {
+			if (typeof raw.text !== 'string' || raw.text.length > MAX_MARKDOWN_CHARS) {
+				return undefined;
+			}
+			if (raw.language !== undefined && typeof raw.language !== 'string') {
+				return undefined;
+			}
+			return typeof raw.language === 'string'
+				? { type: 'code', language: raw.language, text: raw.text }
+				: { type: 'code', text: raw.text };
+		}
+		case 'list': {
+			if (typeof raw.ordered !== 'boolean' || typeof raw.start !== 'number' || !Array.isArray(raw.items)) {
+				return undefined;
+			}
+			const items: MarkdownBlock[][] = [];
+			for (const item of raw.items) {
+				if (!Array.isArray(item)) {
+					return undefined;
+				}
+				const children: MarkdownBlock[] = [];
+				for (const child of item) {
+					const block = validateBlock(child, depth + 1, counter);
+					if (!block) {
+						return undefined;
+					}
+					children.push(block);
+				}
+				items.push(children);
+			}
+			return { type: 'list', ordered: raw.ordered, start: raw.start, items };
+		}
+		case 'blockquote': {
+			if (!Array.isArray(raw.blocks)) {
+				return undefined;
+			}
+			const children: MarkdownBlock[] = [];
+			for (const child of raw.blocks) {
+				const block = validateBlock(child, depth + 1, counter);
+				if (!block) {
+					return undefined;
+				}
+				children.push(block);
+			}
+			return { type: 'blockquote', blocks: children };
+		}
+		case 'table': {
+			if (!Array.isArray(raw.alignment) || !Array.isArray(raw.header) || !Array.isArray(raw.rows)) {
+				return undefined;
+			}
+			const alignment = raw.alignment.map(value => (value === 'left' || value === 'center' || value === 'right' ? value : undefined));
+			const header: MarkdownInline[][] = [];
+			for (const cells of raw.header) {
+				const validated = validateInlineList(cells, depth + 1, counter);
+				if (!validated) {
+					return undefined;
+				}
+				header.push(validated);
+			}
+			const rows: MarkdownInline[][][] = [];
+			for (const row of raw.rows) {
+				if (!Array.isArray(row)) {
+					return undefined;
+				}
+				const cells: MarkdownInline[][] = [];
+				for (const cell of row) {
+					const validated = validateInlineList(cell, depth + 1, counter);
+					if (!validated) {
+						return undefined;
+					}
+					cells.push(validated);
+				}
+				rows.push(cells);
+			}
+			return { type: 'table', alignment, header, rows };
+		}
+		case 'hr':
+			return { type: 'hr' };
+		default:
+			return undefined;
+	}
+}
+
+function validateInlineList(raw: unknown, depth: number, counter: ValidationCounter): MarkdownInline[] | undefined {
+	if (!Array.isArray(raw) || depth > MAX_DEPTH) {
+		return undefined;
+	}
+	const nodes: MarkdownInline[] = [];
+	for (const item of raw) {
+		const node = validateInline(item, depth, counter);
+		if (!node) {
+			return undefined;
+		}
+		nodes.push(node);
+	}
+	return nodes;
+}
+
+function validateInline(raw: unknown, depth: number, counter: ValidationCounter): MarkdownInline | undefined {
+	if (!isRecord(raw) || depth > MAX_DEPTH || counter.nodes++ >= MAX_INLINE_NODES) {
+		return undefined;
+	}
+	switch (raw.type) {
+		case 'text':
+		case 'code':
+			return typeof raw.text === 'string' && raw.text.length <= MAX_MARKDOWN_CHARS
+				? { type: raw.type, text: raw.text }
+				: undefined;
+		case 'strong':
+		case 'em': {
+			const children = validateInlineList(raw.children, depth + 1, counter);
+			return children ? { type: raw.type, children } : undefined;
+		}
+		case 'link': {
+			if (typeof raw.href !== 'string' || !isAllowedLink(raw.href)) {
+				return undefined;
+			}
+			const children = validateInlineList(raw.children, depth + 1, counter);
+			return children ? { type: 'link', href: raw.href, children } : undefined;
+		}
+		case 'image':
+			return typeof raw.alt === 'string' && typeof raw.src === 'string'
+				? { type: 'image', alt: raw.alt.slice(0, MAX_MARKDOWN_CHARS), src: raw.src.slice(0, MAX_URL_LENGTH) }
+				: undefined;
+		case 'break':
+			return { type: 'break' };
+		default:
+			return undefined;
+	}
+}

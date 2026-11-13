@@ -3,9 +3,12 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { MarkdownBlock, isAllowedLink, validateMarkdownBlocks } from './markdown';
 import { ConversationEntry } from './messages';
 
 const MAX_TEXT_LENGTH = 100_000;
+const MAX_ID_LENGTH = 200;
+const MAX_BLOCK_INDEX = 100_000;
 
 export type HostErrorKind = 'no-model' | 'key-rejected' | 'offline' | 'rate-limited' | 'provider-error';
 
@@ -17,13 +20,15 @@ export type WebviewToHost =
 	| { readonly type: 'newChat' }
 	| { readonly type: 'addProvider' }
 	| { readonly type: 'setApiKey' }
-	| { readonly type: 'approvalResponse'; readonly id: string; readonly approved: boolean };
+	| { readonly type: 'approvalResponse'; readonly id: string; readonly approved: boolean }
+	| { readonly type: 'copy'; readonly messageId: string; readonly blockIndex: number }
+	| { readonly type: 'openLink'; readonly url: string };
 
 /** Frames the host may send to the webview. Never carries raw errors or secrets. */
 export type HostToWebview =
 	| { readonly type: 'history'; readonly entries: ReadonlyArray<ConversationEntry> }
 	| { readonly type: 'state'; readonly active?: { readonly providerName: string; readonly model: string }; readonly streaming: boolean }
-	| { readonly type: 'assistantDelta'; readonly text: string }
+	| { readonly type: 'assistantMarkdown'; readonly messageId: string; readonly blocks: ReadonlyArray<MarkdownBlock> }
 	| { readonly type: 'assistantDone'; readonly usage?: { readonly inputTokens?: number; readonly outputTokens?: number } }
 	| { readonly type: 'assistantError'; readonly kind: HostErrorKind; readonly message: string }
 	| { readonly type: 'toolCall'; readonly name: string; readonly arguments: string }
@@ -61,8 +66,19 @@ export function parseWebviewToHost(raw: unknown): WebviewToHost | undefined {
 			}
 			return { type: 'send', text: raw.text };
 		case 'approvalResponse':
-			if (typeof raw.id === 'string' && raw.id.length > 0 && raw.id.length <= 200 && typeof raw.approved === 'boolean') {
+			if (typeof raw.id === 'string' && raw.id.length > 0 && raw.id.length <= MAX_ID_LENGTH && typeof raw.approved === 'boolean') {
 				return { type: 'approvalResponse', id: raw.id, approved: raw.approved };
+			}
+			return undefined;
+		case 'copy':
+			if (typeof raw.messageId === 'string' && raw.messageId.length > 0 && raw.messageId.length <= MAX_ID_LENGTH
+				&& typeof raw.blockIndex === 'number' && Number.isInteger(raw.blockIndex) && raw.blockIndex >= 0 && raw.blockIndex <= MAX_BLOCK_INDEX) {
+				return { type: 'copy', messageId: raw.messageId, blockIndex: raw.blockIndex };
+			}
+			return undefined;
+		case 'openLink':
+			if (typeof raw.url === 'string' && isAllowedLink(raw.url)) {
+				return { type: 'openLink', url: raw.url.trim() };
 			}
 			return undefined;
 		default:
@@ -83,7 +99,18 @@ function parseEntry(raw: unknown): ConversationEntry | undefined {
 	if (!isBoundedString(raw.text)) {
 		return undefined;
 	}
-	if (raw.kind === 'user' || raw.kind === 'assistant' || raw.kind === 'notice') {
+	if (raw.kind === 'assistant') {
+		let blocks: MarkdownBlock[] | undefined;
+		if (raw.blocks !== undefined) {
+			blocks = validateMarkdownBlocks(raw.blocks);
+			if (!blocks) {
+				return undefined;
+			}
+		}
+		const id = typeof raw.id === 'string' && raw.id.length > 0 && raw.id.length <= MAX_ID_LENGTH ? raw.id : undefined;
+		return { kind: 'assistant', text: raw.text, ...(id ? { id } : {}), ...(blocks ? { blocks } : {}) };
+	}
+	if (raw.kind === 'user' || raw.kind === 'notice') {
 		return { kind: raw.kind, text: raw.text };
 	}
 	return undefined;
@@ -125,8 +152,13 @@ export function parseHostToWebview(raw: unknown): HostToWebview | undefined {
 			}
 			return undefined;
 		}
-		case 'assistantDelta':
-			return isBoundedString(raw.text) ? { type: 'assistantDelta', text: raw.text } : undefined;
+		case 'assistantMarkdown': {
+			if (typeof raw.messageId !== 'string' || raw.messageId.length === 0 || raw.messageId.length > MAX_ID_LENGTH) {
+				return undefined;
+			}
+			const blocks = validateMarkdownBlocks(raw.blocks);
+			return blocks ? { type: 'assistantMarkdown', messageId: raw.messageId, blocks } : undefined;
+		}
 		case 'assistantDone': {
 			if (raw.usage === undefined) {
 				return { type: 'assistantDone' };

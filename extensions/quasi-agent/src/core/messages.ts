@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { MarkdownBlock } from './markdown';
 import { ChatMessage } from './providerApi';
 
 /**
@@ -11,7 +12,7 @@ import { ChatMessage } from './providerApi';
  */
 export type ConversationEntry =
 	| { readonly kind: 'user'; readonly text: string }
-	| { readonly kind: 'assistant'; readonly text: string }
+	| { readonly kind: 'assistant'; readonly text: string; readonly id?: string; readonly blocks?: ReadonlyArray<MarkdownBlock> }
 	| { readonly kind: 'notice'; readonly text: string }
 	| { readonly kind: 'tool'; readonly name: string; readonly args: string; readonly summary: string; readonly isError: boolean };
 

@@ -42,10 +42,19 @@ describe('parseHostToWebview', () => {
 	});
 
 	it('accepts stream and status frames', () => {
-		assert.deepStrictEqual(parseHostToWebview({ type: 'assistantDelta', text: 'a' }), { type: 'assistantDelta', text: 'a' });
+		assert.deepStrictEqual(
+			parseHostToWebview({ type: 'assistantMarkdown', messageId: 'm1', blocks: [{ type: 'paragraph', children: [{ type: 'text', text: 'a' }] }] }),
+			{ type: 'assistantMarkdown', messageId: 'm1', blocks: [{ type: 'paragraph', children: [{ type: 'text', text: 'a' }] }] }
+		);
 		assert.deepStrictEqual(parseHostToWebview({ type: 'assistantDone' }), { type: 'assistantDone' });
 		assert.deepStrictEqual(parseHostToWebview({ type: 'busy', value: true }), { type: 'busy', value: true });
 		assert.deepStrictEqual(parseHostToWebview({ type: 'cleared' }), { type: 'cleared' });
+	});
+
+	it('rejects malformed markdown frames', () => {
+		assert.strictEqual(parseHostToWebview({ type: 'assistantMarkdown', messageId: '', blocks: [] }), undefined);
+		assert.strictEqual(parseHostToWebview({ type: 'assistantMarkdown', messageId: 'm', blocks: [{ type: 'unknown' }] }), undefined);
+		assert.strictEqual(parseHostToWebview({ type: 'assistantMarkdown', messageId: 'm', blocks: 'nope' }), undefined);
 	});
 
 	it('accepts only whitelisted error kinds with redacted text', () => {
@@ -96,5 +105,29 @@ describe('M2 protocol frames', () => {
 			{ type: 'history', entries: [{ kind: 'tool', name: 'read_file', args: '{}', summary: 'ok', isError: false }] }
 		);
 		assert.strictEqual(parseHostToWebview({ type: 'history', entries: [{ kind: 'tool', name: 'x' }] }), undefined);
+	});
+});
+
+describe('markdown and link protocol frames', () => {
+	it('accepts copy frames with a message id and block index', () => {
+		assert.deepStrictEqual(parseWebviewToHost({ type: 'copy', messageId: 'm1', blockIndex: 2 }), { type: 'copy', messageId: 'm1', blockIndex: 2 });
+		assert.strictEqual(parseWebviewToHost({ type: 'copy', messageId: '', blockIndex: 0 }), undefined);
+		assert.strictEqual(parseWebviewToHost({ type: 'copy', messageId: 'm1', blockIndex: -1 }), undefined);
+		assert.strictEqual(parseWebviewToHost({ type: 'copy', messageId: 'm1', blockIndex: '0' }), undefined);
+	});
+
+	it('accepts only http/https openLink frames', () => {
+		assert.deepStrictEqual(parseWebviewToHost({ type: 'openLink', url: 'https://example.com' }), { type: 'openLink', url: 'https://example.com' });
+		assert.strictEqual(parseWebviewToHost({ type: 'openLink', url: 'javascript:alert(1)' }), undefined);
+		assert.strictEqual(parseWebviewToHost({ type: 'openLink', url: 'file:///etc/passwd' }), undefined);
+	});
+
+	it('parses assistant history entries with blocks', () => {
+		const blocks = [{ type: 'heading', level: 2, children: [{ type: 'text', text: 'Hi' }] }];
+		assert.deepStrictEqual(
+			parseHostToWebview({ type: 'history', entries: [{ kind: 'assistant', text: '## Hi', id: 'm1', blocks }] }),
+			{ type: 'history', entries: [{ kind: 'assistant', text: '## Hi', id: 'm1', blocks }] }
+		);
+		assert.strictEqual(parseHostToWebview({ type: 'history', entries: [{ kind: 'assistant', text: 'x', blocks: [{ type: 'bad' }] }] }), undefined);
 	});
 });
