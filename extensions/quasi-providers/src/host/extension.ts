@@ -7,7 +7,7 @@ import * as vscode from 'vscode';
 import { findProvider } from '../core/providerConfig';
 import { ProviderConfig } from '../core/types';
 import { registerCommands } from './commands';
-import { maybeAutoDiscover, registerDiscovery } from './discovery';
+import { maybeFirstRun, registerDiscovery } from './discovery';
 import { registerExportImport } from './exportImport';
 import { providerFor } from './providerRuntime';
 import { registerSafetyCommand } from './safetyCommands';
@@ -82,5 +82,5 @@ export function activate(context: vscode.ExtensionContext): void {
 	registerDiscovery(context);
 	registerExportImport(context, { keyStore, statusBar });
 	registerSafetyCommand(context);
-	void maybeAutoDiscover(context);
+	void maybeFirstRun(context);
 }

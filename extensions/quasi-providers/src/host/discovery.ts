@@ -9,24 +9,40 @@ import { addProvider as appendProvider, slugify, uniqueProviderId } from '../cor
 import { ProviderConfig } from '../core/types';
 import { readDiscoveryDontAskAgain, readProviders, writeDiscoveryDontAskAgain, writeProviders } from './settings';
 
-const AUTO_RAN_KEY = 'quasi.discovery.autoRan';
+const FIRST_RUN_KEY = 'quasi.firstRunShown';
 
 export function registerDiscovery(context: vscode.ExtensionContext): void {
 	context.subscriptions.push(
-		vscode.commands.registerCommand('quasi.discovery.detectLocalModels', () => detectLocalModels(true))
+		vscode.commands.registerCommand('quasi.discovery.detectLocalModels', () => detectLocalModels())
 	);
 }
 
-/** Run discovery once per install (unless the user opted out). */
-export async function maybeAutoDiscover(context: vscode.ExtensionContext): Promise<void> {
-	if (context.globalState.get<boolean>(AUTO_RAN_KEY)) {
+/**
+ * One first-run prompt (shown once, unless the user opted out). It replaces the
+ * standalone discovery prompt, so the user never sees two first-run prompts.
+ */
+export async function maybeFirstRun(context: vscode.ExtensionContext): Promise<void> {
+	if (context.globalState.get<boolean>(FIRST_RUN_KEY)) {
 		return;
 	}
-	await context.globalState.update(AUTO_RAN_KEY, true);
 	if (readDiscoveryDontAskAgain()) {
 		return;
 	}
-	await detectLocalModels(false);
+	await context.globalState.update(FIRST_RUN_KEY, true);
+
+	const local = 'Use a local model (Ollama)';
+	const ownKey = 'Use my own API key';
+	const choice = await vscode.window.showInformationMessage(
+		'Quasi: how do you want to connect to models?',
+		local,
+		ownKey,
+		'Skip'
+	);
+	if (choice === local) {
+		await vscode.commands.executeCommand('quasi.discovery.detectLocalModels');
+	} else if (choice === ownKey) {
+		await vscode.commands.executeCommand('quasi.provider.quickAdd');
+	}
 }
 
 function originOf(baseUrl: string): string | undefined {
@@ -57,7 +73,7 @@ async function addServers(servers: ReadonlyArray<DiscoveredServer>): Promise<voi
 	void vscode.window.showInformationMessage(`Quasi: added local provider(s): ${added.join(', ')}.`);
 }
 
-async function detectLocalModels(interactive: boolean): Promise<void> {
+async function detectLocalModels(): Promise<void> {
 	const found = await probeLocalServers();
 	const { providers } = readProviders();
 	const configured = new Set(providers.map(provider => originOf(provider.baseUrl)).filter((origin): origin is string => !!origin));
@@ -67,26 +83,7 @@ async function detectLocalModels(interactive: boolean): Promise<void> {
 	});
 
 	if (candidates.length === 0) {
-		if (interactive) {
-			void vscode.window.showInformationMessage('Quasi: no new local model servers found.');
-		}
-		return;
-	}
-
-	// Automatic startup: ask with a non-modal notification when there is one server.
-	if (!interactive && candidates.length === 1) {
-		const server = candidates[0];
-		const action = await vscode.window.showInformationMessage(
-			`Quasi: found ${server.label} on :${server.port}. Add it?`,
-			'Add',
-			'Not now',
-			'Don\'t ask again'
-		);
-		if (action === 'Add') {
-			await addServers([server]);
-		} else if (action === 'Don\'t ask again') {
-			await writeDiscoveryDontAskAgain(true);
-		}
+		void vscode.window.showInformationMessage('Quasi: no new local model servers found.');
 		return;
 	}
 
