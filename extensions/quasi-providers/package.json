@@ -216,7 +216,60 @@
           }
         }
       }
-    }
+    },
+    "walkthroughs": [
+      {
+        "id": "gettingStarted",
+        "title": "Get started with Quasi-Gravity",
+        "description": "Connect a model with your own API key or a local server, then export your setup.",
+        "steps": [
+          {
+            "id": "addProvider",
+            "title": "Add a provider with your own API key",
+            "description": "Paste an API key and Quasi-Gravity works out the provider for you. The key is stored in secure storage, never in settings.\n[Quick add a provider](command:quasi.provider.quickAdd)",
+            "completionEvents": [
+              "onCommand:quasi.provider.quickAdd"
+            ],
+            "media": {
+              "markdown": "media/empty.md"
+            }
+          },
+          {
+            "id": "localModel",
+            "title": "Connect a local model",
+            "description": "Detect Ollama, LM Studio, llama.cpp, or vLLM running on this machine. Nothing is added without your confirmation.\n[Detect local models](command:quasi.discovery.detectLocalModels)",
+            "completionEvents": [
+              "onCommand:quasi.discovery.detectLocalModels"
+            ],
+            "media": {
+              "markdown": "media/empty.md"
+            }
+          },
+          {
+            "id": "activeModel",
+            "title": "Pick the active model",
+            "description": "Choose which model the editor should use. The list comes from the provider.\n[Select active model](command:quasi.provider.selectModel)",
+            "completionEvents": [
+              "onCommand:quasi.provider.selectModel"
+            ],
+            "media": {
+              "markdown": "media/empty.md"
+            }
+          },
+          {
+            "id": "exportSettings",
+            "title": "Export your settings",
+            "description": "Save your providers to a plain JSON file you can move to another machine. API keys are never included; re-enter them on each device.\n[Export settings](command:quasi.settings.export)",
+            "completionEvents": [
+              "onCommand:quasi.settings.export"
+            ],
+            "media": {
+              "markdown": "media/empty.md"
+            }
+          }
+        ]
+      }
+    ]
   },
   "scripts": {
     "compile": "gulp compile-extension:quasi-providers",
