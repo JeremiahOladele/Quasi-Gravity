@@ -172,15 +172,29 @@ describe('OpenAICompatProvider', () => {
 });
 
 describe('normalizeBaseUrl', () => {
-	it('appends /v1 when missing', () => {
+	it('appends /v1 when the URL has no path', () => {
 		assert.strictEqual(normalizeBaseUrl('https://api.deepseek.com'), 'https://api.deepseek.com/v1');
+		assert.strictEqual(normalizeBaseUrl('https://example.com'), 'https://example.com/v1');
 	});
 
-	it('keeps an existing /v1', () => {
+	it('keeps an existing path', () => {
 		assert.strictEqual(normalizeBaseUrl('http://localhost:11434/v1'), 'http://localhost:11434/v1');
+		assert.strictEqual(normalizeBaseUrl('https://api.openai.com/v1'), 'https://api.openai.com/v1');
+		assert.strictEqual(normalizeBaseUrl('https://generativelanguage.googleapis.com/v1beta/openai'), 'https://generativelanguage.googleapis.com/v1beta/openai');
+		assert.strictEqual(normalizeBaseUrl('https://api.fireworks.ai/inference/v1'), 'https://api.fireworks.ai/inference/v1');
 	});
 
 	it('strips trailing slashes', () => {
 		assert.strictEqual(normalizeBaseUrl('https://example.com/v1/'), 'https://example.com/v1');
+		assert.strictEqual(normalizeBaseUrl('https://api.deepseek.com/'), 'https://api.deepseek.com/v1');
+	});
+
+	it('keeps saved preset URLs behaving identically (regression)', () => {
+		// These are the base URLs the existing M1/M2 presets stored. The old
+		// implementation appended /v1 unless the path already ended in /v1.
+		assert.strictEqual(normalizeBaseUrl('https://api.deepseek.com'), 'https://api.deepseek.com/v1');
+		assert.strictEqual(normalizeBaseUrl('http://localhost:11434/v1'), 'http://localhost:11434/v1');
+		assert.strictEqual(normalizeBaseUrl('http://localhost:1234/v1'), 'http://localhost:1234/v1');
+		assert.strictEqual(normalizeBaseUrl('https://api.openai.com/v1'), 'https://api.openai.com/v1');
 	});
 });

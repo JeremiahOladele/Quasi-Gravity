@@ -89,13 +89,20 @@ export class ProviderError extends Error {
 /**
  * Normalize an OpenAI-compatible base URL so endpoints can be appended directly
  * (e.g. `{base}/models`, `{base}/chat/completions`).
- * Trims whitespace, strips trailing slashes, and appends `/v1` unless the path
- * already ends with `/v1`.
+ *
+ * Trims whitespace and trailing slashes, and appends `/v1` only when the URL has
+ * no path. URLs that already carry a path (e.g. `/v1`, `/v1beta/openai`,
+ * `/inference/v1`) are left as-is so non-`/v1` providers work too.
  */
 export function normalizeBaseUrl(baseUrl: string): string {
-	let url = baseUrl.trim().replace(/\/+$/, '');
-	if (!/\/v1$/.test(url)) {
-		url += '/v1';
+	const trimmed = baseUrl.trim().replace(/\/+$/, '');
+	try {
+		const url = new URL(trimmed);
+		if (url.pathname === '' || url.pathname === '/') {
+			return `${trimmed}/v1`;
+		}
+		return trimmed;
+	} catch {
+		return trimmed;
 	}
-	return url;
 }
