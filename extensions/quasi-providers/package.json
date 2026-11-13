@@ -13,16 +13,127 @@
   ],
   "main": "./out/host/extension.js",
   "activationEvents": [
+    "onStartupFinished",
+    "onCommand:quasi.provider.add",
+    "onCommand:quasi.provider.edit",
+    "onCommand:quasi.provider.remove",
+    "onCommand:quasi.provider.setKey",
+    "onCommand:quasi.provider.testConnection",
+    "onCommand:quasi.provider.selectModel",
     "onCommand:quasi.provider.test"
   ],
   "contributes": {
     "commands": [
       {
+        "command": "quasi.provider.add",
+        "title": "Quasi: Add Provider",
+        "category": "Quasi"
+      },
+      {
+        "command": "quasi.provider.edit",
+        "title": "Quasi: Edit Provider",
+        "category": "Quasi"
+      },
+      {
+        "command": "quasi.provider.remove",
+        "title": "Quasi: Remove Provider",
+        "category": "Quasi"
+      },
+      {
+        "command": "quasi.provider.setKey",
+        "title": "Quasi: Set API Key",
+        "category": "Quasi"
+      },
+      {
+        "command": "quasi.provider.testConnection",
+        "title": "Quasi: Test Connection",
+        "category": "Quasi"
+      },
+      {
+        "command": "quasi.provider.selectModel",
+        "title": "Quasi: Select Active Model",
+        "category": "Quasi"
+      },
+      {
         "command": "quasi.provider.test",
         "title": "Quasi: Test Provider (dev)",
         "category": "Quasi"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "Quasi",
+      "properties": {
+        "quasi.providers": {
+          "type": "array",
+          "scope": "application",
+          "default": [],
+          "markdownDescription": "Configured model providers (non-secret). API keys are stored separately in the OS keyring and are never written here.",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "name",
+              "kind",
+              "apiType",
+              "baseUrl",
+              "requiresKey"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Stable id (slug). Never change it; API keys are keyed by it."
+              },
+              "name": {
+                "type": "string",
+                "description": "Display name."
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "cloud",
+                  "local",
+                  "remote"
+                ]
+              },
+              "apiType": {
+                "type": "string",
+                "enum": [
+                  "openai-compat",
+                  "ollama",
+                  "anthropic",
+                  "gemini"
+                ]
+              },
+              "baseUrl": {
+                "type": "string",
+                "description": "OpenAI-compatible base URL, for example https://api.deepseek.com or http://localhost:11434/v1."
+              },
+              "defaultModel": {
+                "type": "string"
+              },
+              "requiresKey": {
+                "type": "boolean"
+              },
+              "capabilities": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "quasi.activeProviderId": {
+          "type": "string",
+          "scope": "application",
+          "default": "",
+          "description": "The id of the active model provider."
+        },
+        "quasi.activeModel": {
+          "type": "string",
+          "scope": "application",
+          "default": "",
+          "description": "The active model id for the active provider."
+        }
+      }
+    }
   },
   "scripts": {
     "compile": "gulp compile-extension:quasi-providers",
