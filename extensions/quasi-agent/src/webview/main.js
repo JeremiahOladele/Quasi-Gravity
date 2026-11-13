@@ -10,6 +10,7 @@
 	const errorBox = document.getElementById('error');
 	const errorText = document.getElementById('errorText');
 	const errorAction = document.getElementById('errorAction');
+	const revertAllBtn = document.getElementById('revertAll');
 
 	let streaming = false;
 	let errorActionKind = null;
@@ -19,6 +20,7 @@
 	let pendingMarkdown = null;
 	let approvalCards = new Map();
 	let assistantContainers = new Map();
+	let changeCards = new Map();
 
 	const MD_MAX_DEPTH = 8;
 	const MD_MAX_NODES = 20000;
@@ -117,9 +119,21 @@
 			case 'toolResult':
 				return typeof message.name === 'string' && typeof message.summary === 'string' && typeof message.isError === 'boolean';
 			case 'approvalRequest':
-				return typeof message.id === 'string' && typeof message.toolName === 'string' && typeof message.detail === 'string' && (message.reason === 'sensitive-file' || message.reason === 'outside-workspace');
+				return typeof message.id === 'string' && typeof message.toolName === 'string' && typeof message.detail === 'string'
+					&& (message.reason === 'sensitive-file' || message.reason === 'outside-workspace' || message.reason === 'protected-path' || message.reason === 'delete' || message.reason === 'bulk-change' || message.reason === 'destructive-write')
+					&& (message.diff === undefined || (typeof message.diff === 'string' && message.diff.length <= 20000));
 			case 'approvalResolved':
 				return typeof message.id === 'string' && typeof message.approved === 'boolean';
+			case 'change':
+				return typeof message.id === 'string' && typeof message.path === 'string' && typeof message.summary === 'string'
+					&& typeof message.diff === 'string' && message.diff.length <= 20000
+					&& typeof message.diffTruncated === 'boolean' && typeof message.canRevert === 'boolean';
+			case 'changeReverted':
+				return typeof message.id === 'string';
+			case 'changesReverted':
+				return true;
+			case 'undoState':
+				return typeof message.canRevertAll === 'boolean';
 			case 'notice':
 				return typeof message.text === 'string';
 			case 'cleared':
@@ -149,6 +163,69 @@
 		body.textContent = value;
 		entry.appendChild(body);
 		return entry;
+	}
+
+	function renderDiff(parent, value) {
+		if (typeof value !== 'string' || value.length === 0) {
+			return;
+		}
+		const pre = el('pre', 'md-diff');
+		for (const line of value.split('\n')) {
+			const first = line.charAt(0);
+			const row = el('span', 'diff-line' + (first === '+' ? ' diff-add' : first === '-' ? ' diff-del' : ''));
+			row.textContent = line.length > 0 ? line : ' ';
+			pre.appendChild(row);
+		}
+		parent.appendChild(pre);
+	}
+
+	function renderChange(change) {
+		const card = el('div', 'entry change');
+		const header = el('div', 'change-header');
+		const title = el('span', 'change-title');
+		title.textContent = change.summary || change.path;
+		header.appendChild(title);
+		card.appendChild(header);
+		renderDiff(card, change.diff);
+		if (change.diffTruncated) {
+			const note = el('div', 'change-note');
+			note.textContent = 'Diff truncated. Open the full diff for details.';
+			card.appendChild(note);
+		}
+		const actions = el('div', 'change-actions');
+		const open = el('button');
+		open.type = 'button';
+		open.textContent = 'Open diff';
+		open.addEventListener('click', function () {
+			vscode.postMessage({ type: 'openDiff', id: change.id });
+		});
+		actions.appendChild(open);
+		let revert = null;
+		if (change.canRevert) {
+			revert = el('button');
+			revert.type = 'button';
+			revert.textContent = 'Revert';
+			revert.addEventListener('click', function () {
+				vscode.postMessage({ type: 'revertChange', id: change.id });
+			});
+			actions.appendChild(revert);
+		}
+		card.appendChild(actions);
+		const finish = function () {
+			card.classList.add('reverted');
+			open.disabled = true;
+			if (revert) {
+				revert.disabled = true;
+			}
+			if (!card.querySelector('.change-status')) {
+				const status = el('div', 'change-status');
+				status.textContent = 'Reverted';
+				card.appendChild(status);
+			}
+		};
+		changeCards.set(change.id, finish);
+		messagesEl.appendChild(card);
+		scrollToBottom();
 	}
 
 	function createToolEntry(name, args, summary, isError) {
@@ -386,6 +463,7 @@
 		messagesEl.textContent = '';
 		approvalCards = new Map();
 		assistantContainers = new Map();
+		changeCards = new Map();
 		lastToolEl = null;
 		for (const item of entries) {
 			if (!item || typeof item.kind !== 'string') {
@@ -430,12 +508,23 @@
 
 	function showApproval(request) {
 		const card = el('div', 'entry approval');
+		const titles = {
+			'sensitive-file': 'sensitive file',
+			'outside-workspace': 'outside the workspace',
+			'protected-path': 'protected file',
+			'delete': 'delete file',
+			'bulk-change': 'many file changes',
+			'destructive-write': 'large replacement'
+		};
 		const title = el('div', 'approval-title');
-		title.textContent = request.reason === 'sensitive-file' ? 'Approval required: sensitive file' : 'Approval required: outside the workspace';
+		title.textContent = 'Approval required: ' + (titles[request.reason] || 'action');
 		card.appendChild(title);
 		const detail = el('pre', 'approval-detail');
 		detail.textContent = request.detail + '\nTool: ' + request.toolName;
 		card.appendChild(detail);
+		if (typeof request.diff === 'string' && request.diff.length > 0) {
+			renderDiff(card, request.diff);
+		}
 		const actions = el('div', 'approval-actions');
 		const allow = el('button');
 		allow.type = 'button';
@@ -549,6 +638,24 @@
 			case 'approvalResolved':
 				resolveApproval(message.id, message.approved);
 				break;
+			case 'change':
+				renderChange(message);
+				break;
+			case 'changeReverted': {
+				const finish = changeCards.get(message.id);
+				if (finish) {
+					finish();
+					changeCards.delete(message.id);
+				}
+				break;
+			}
+			case 'changesReverted':
+				changeCards.forEach(function (finish) { finish(); });
+				changeCards = new Map();
+				break;
+			case 'undoState':
+				revertAllBtn.hidden = !message.canRevertAll;
+				break;
 			case 'notice':
 				showNotice(message.text);
 				break;
@@ -562,7 +669,9 @@
 				messagesEl.textContent = '';
 				approvalCards = new Map();
 				assistantContainers = new Map();
+				changeCards = new Map();
 				lastToolEl = null;
+				revertAllBtn.hidden = true;
 				clearError();
 				break;
 			case 'busy':
@@ -604,6 +713,9 @@
 	});
 	newChatBtn.addEventListener('click', function () {
 		vscode.postMessage({ type: 'newChat' });
+	});
+	revertAllBtn.addEventListener('click', function () {
+		vscode.postMessage({ type: 'revertAll' });
 	});
 	errorAction.addEventListener('click', function () {
 		if (errorActionKind) {

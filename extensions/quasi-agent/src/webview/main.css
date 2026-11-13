@@ -326,3 +326,48 @@ details.entry.tool pre {
 	font-style: italic;
 	word-break: break-word;
 }
+
+.md-diff {
+	margin: 4px 0;
+	padding: 6px 8px;
+	max-height: 260px;
+	overflow: auto;
+	background: var(--vscode-textCodeBlock-background);
+	font-family: var(--vscode-editor-font-family, monospace);
+	font-size: 0.9em;
+}
+
+.md-diff .diff-line {
+	display: block;
+	white-space: pre;
+}
+
+.md-diff .diff-add {
+	color: var(--vscode-gitDecoration-addedResourceForeground, #2ea043);
+}
+
+.md-diff .diff-del {
+	color: var(--vscode-gitDecoration-deletedResourceForeground, #f85149);
+}
+
+.entry.change .change-header {
+	font-weight: 600;
+	word-break: break-word;
+}
+
+.entry.change .change-actions {
+	display: flex;
+	gap: 6px;
+	margin-top: 4px;
+}
+
+.entry.change .change-note,
+.entry.change .change-status {
+	opacity: 0.8;
+	font-size: 0.9em;
+	margin-top: 2px;
+}
+
+.entry.change.reverted {
+	opacity: 0.65;
+}
