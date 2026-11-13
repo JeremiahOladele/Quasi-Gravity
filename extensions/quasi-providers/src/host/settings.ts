@@ -51,3 +51,12 @@ export function readDiscoveryDontAskAgain(): boolean {
 export async function writeDiscoveryDontAskAgain(value: boolean): Promise<void> {
 	await configuration().update('discovery.dontAskAgain', value, vscode.ConfigurationTarget.Global);
 }
+
+export function readDefaults(): Record<string, unknown> {
+	const value = configuration().get<Record<string, unknown>>('defaults');
+	return typeof value === 'object' && value !== null && !Array.isArray(value) ? value : {};
+}
+
+export async function writeDefaults(value: Record<string, unknown>): Promise<void> {
+	await configuration().update('defaults', value, vscode.ConfigurationTarget.Global);
+}

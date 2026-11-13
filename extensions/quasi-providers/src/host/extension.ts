@@ -8,6 +8,7 @@ import { findProvider } from '../core/providerConfig';
 import { ProviderConfig } from '../core/types';
 import { registerCommands } from './commands';
 import { maybeAutoDiscover, registerDiscovery } from './discovery';
+import { registerExportImport } from './exportImport';
 import { providerFor } from './providerRuntime';
 import { KeyStore, VscodeSecretBackend } from './secrets';
 import { readActiveModel, readActiveProviderId, readProviders } from './settings';
@@ -78,5 +79,6 @@ export function activate(context: vscode.ExtensionContext): void {
 
 	registerCommands(context, { keyStore, statusBar });
 	registerDiscovery(context);
+	registerExportImport(context);
 	void maybeAutoDiscover(context);
 }
