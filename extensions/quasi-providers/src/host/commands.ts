@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as vscode from 'vscode';
+import { assessCapabilities } from '../core/capabilities';
 import { checkApiKey, KeyCheck, KeyCheckStatus } from '../core/keyCheck';
 import { detectProviderIdsForKey, normalizeKey } from '../core/keyDetect';
 import {
@@ -18,7 +19,7 @@ import {
 } from '../core/providerConfig';
 import { createProvider } from '../core/providers/factory';
 import { ProviderPreset, providerPresets } from '../core/providers/presets';
-import { ModelInfo, ProviderConfig, ProviderError } from '../core/types';
+import { Capabilities, ModelInfo, ProviderConfig, ProviderError } from '../core/types';
 import { providerFor } from './providerRuntime';
 import { KeyStore, SetKeyResult } from './secrets';
 import {
@@ -156,10 +157,11 @@ async function addProviderCommand(services: CommandServices): Promise<void> {
 	}
 	reportKeyStatus(keyStatus);
 
-	const model = await chooseModelId(config.name, listed.models, undefined);
+	const model = await chooseModelId(config, listed.models, undefined);
 	if (model === undefined) {
 		return; // cancelled: save nothing
 	}
+	await maybeWarnUnsupportedTools(config, model);
 
 	if (keyStatus !== 'verified') {
 		const outcome = await maybeVerifyWithMessage(config, key, model);
@@ -251,10 +253,11 @@ async function quickAddCommand(services: CommandServices): Promise<void> {
 	}
 	reportKeyStatus(keyStatus);
 
-	const model = await chooseModelId(preset.config.name, listed.models, undefined);
+	const model = await chooseModelId(tempConfig, listed.models, undefined);
 	if (model === undefined) {
 		return; // cancelled: discard the in-memory key, save nothing
 	}
+	await maybeWarnUnsupportedTools(tempConfig, model);
 
 	if (keyStatus !== 'verified') {
 		const outcome = await maybeVerifyWithMessage(tempConfig, key, model);
@@ -502,10 +505,11 @@ async function pickModelForProvider(services: CommandServices, provider: Provide
 		clearTimeout(timeout);
 	}
 
-	const model = await chooseModelId(provider.name, models, readActiveModel() ?? provider.defaultModel);
+	const model = await chooseModelId(provider, models, readActiveModel() ?? provider.defaultModel);
 	if (model === undefined) {
 		return;
 	}
+	await maybeWarnUnsupportedTools(provider, model);
 	await writeActiveModel(model);
 }
 
@@ -772,16 +776,19 @@ function describePreset(preset: ProviderPreset): string {
 	return parts.join(' · ');
 }
 
-/** Show a model picker (with a manual-entry option). Undefined means cancelled. */
-async function chooseModelId(providerName: string, models: ReadonlyArray<ModelInfo>, active: string | undefined): Promise<string | undefined> {
-	const items: Array<vscode.QuickPickItem & { model?: string }> = models.map(model => ({
-		label: model.id,
-		description: model.name,
-		model: model.id
-	}));
+/** Show a model picker (with capability hints and a manual-entry option). */
+async function chooseModelId(config: ProviderConfig, models: ReadonlyArray<ModelInfo>, active: string | undefined): Promise<string | undefined> {
+	const items: Array<vscode.QuickPickItem & { model?: string }> = models.map(model => {
+		const assessment = assessCapabilities(model.capabilities, config.capabilities);
+		return {
+			label: model.id,
+			description: [model.name, `tools: ${assessment.tools}`].filter(part => !!part).join(' · '),
+			model: model.id
+		};
+	});
 	items.push({ label: MANUAL_MODEL });
 
-	const picked = await vscode.window.showQuickPick(items, { placeHolder: `Select a model for '${providerName}'`, matchOnDescription: true });
+	const picked = await vscode.window.showQuickPick(items, { placeHolder: `Select a model for '${config.name}'`, matchOnDescription: true });
 	if (!picked) {
 		return undefined;
 	}
@@ -793,6 +800,43 @@ async function chooseModelId(providerName: string, models: ReadonlyArray<ModelIn
 		return entered.trim() || undefined;
 	}
 	return picked.model;
+}
+
+const warnedUnsupportedModels = new Set<string>();
+
+/**
+ * Best-effort capability probe after a model is selected. Warn only when tools
+ * are known to be unsupported; unknown stays quiet (a label in the picker).
+ */
+async function maybeWarnUnsupportedTools(config: ProviderConfig, modelId: string): Promise<void> {
+	let reported: Partial<Capabilities> | undefined;
+	try {
+		const provider = createProvider(config, async () => undefined);
+		if (provider.getModelCapabilities) {
+			const controller = new AbortController();
+			const timeout = setTimeout(() => controller.abort(), 2000);
+			try {
+				reported = await provider.getModelCapabilities(modelId, controller.signal);
+			} catch {
+				// best effort
+			} finally {
+				clearTimeout(timeout);
+			}
+		}
+	} catch {
+		// unknown
+	}
+
+	const assessment = assessCapabilities(reported, config.capabilities);
+	if (assessment.tools !== 'unsupported') {
+		return;
+	}
+	const key = `${config.id}:${modelId}`;
+	if (warnedUnsupportedModels.has(key)) {
+		return;
+	}
+	warnedUnsupportedModels.add(key);
+	void vscode.window.showWarningMessage(`Quasi: '${modelId}' may not support tools. The agent will fall back to plain chat for it.`);
 }
 
 async function pickProvider(providers: ReadonlyArray<ProviderConfig>, placeHolder: string): Promise<ProviderConfig | undefined> {
