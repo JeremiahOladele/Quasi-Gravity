@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as vscode from 'vscode';
+import { detectProviderIdsForKey, normalizeKey } from '../core/keyDetect';
 import {
 	addProvider as appendProvider,
 	hostOf,
@@ -14,10 +15,11 @@ import {
 	uniqueProviderId,
 	updateProvider
 } from '../core/providerConfig';
-import { providerPresets } from '../core/providers/presets';
-import { ModelInfo, ProviderConfig } from '../core/types';
+import { createProvider } from '../core/providers/factory';
+import { ProviderPreset, providerPresets } from '../core/providers/presets';
+import { ModelInfo, ProviderConfig, ProviderError } from '../core/types';
 import { providerFor } from './providerRuntime';
-import { KeyStore } from './secrets';
+import { KeyStore, SetKeyResult } from './secrets';
 import {
 	readActiveModel,
 	readActiveProviderId,
@@ -44,6 +46,7 @@ export function registerCommands(context: vscode.ExtensionContext, services: Com
 	};
 
 	register('quasi.provider.add', () => addProviderCommand(services));
+	register('quasi.provider.quickAdd', () => quickAddCommand(services));
 	register('quasi.provider.edit', () => editProviderCommand(services));
 	register('quasi.provider.remove', () => removeProviderCommand(services));
 	register('quasi.provider.setKey', () => setApiKeyCommand(services));
@@ -57,11 +60,21 @@ export function registerCommands(context: vscode.ExtensionContext, services: Com
 //#region Add / Edit / Remove
 
 async function addProviderCommand(services: CommandServices): Promise<void> {
-	const pick = await vscode.window.showQuickPick(
-		providerPresets.map(preset => ({ label: preset.label, description: preset.config.kind === 'local' ? 'local' : 'cloud', preset })),
-		{ placeHolder: 'Choose a provider preset' }
-	);
+	type AddItem =
+		| { label: string; description?: string; choice: 'quick' }
+		| { label: string; description?: string; choice: 'preset'; preset: ProviderPreset };
+
+	const items: AddItem[] = [
+		{ label: '$(key) Quick add: paste an API key', description: 'Detect the provider from the key', choice: 'quick' },
+		...providerPresets.map(preset => ({ label: preset.label, description: describePreset(preset), choice: 'preset' as const, preset })),
+	];
+
+	const pick = await vscode.window.showQuickPick(items, { placeHolder: 'Choose a provider preset' });
 	if (!pick) {
+		return;
+	}
+	if (pick.choice === 'quick') {
+		await quickAddCommand(services);
 		return;
 	}
 	const preset = pick.preset;
@@ -77,7 +90,7 @@ async function addProviderCommand(services: CommandServices): Promise<void> {
 	}
 
 	let requiresKey = preset.config.requiresKey;
-	if (preset.label === 'Custom OpenAI-compatible') {
+	if (preset.id === 'custom') {
 		const answer = await vscode.window.showQuickPick(['Yes (cloud)', 'No (local)'], { placeHolder: 'Does this provider require an API key?' });
 		if (!answer) {
 			return;
@@ -106,7 +119,6 @@ async function addProviderCommand(services: CommandServices): Promise<void> {
 		apiType: 'openai-compat',
 		baseUrl,
 		requiresKey,
-		...(preset.config.defaultModel ? { defaultModel: preset.config.defaultModel } : {}),
 	};
 
 	await writeProviders(appendProvider(providers, config));
@@ -115,13 +127,138 @@ async function addProviderCommand(services: CommandServices): Promise<void> {
 		await storeKey(services, id, key);
 	}
 
-	if (!readActiveProviderId()) {
-		await writeActiveProviderId(id);
-		await writeActiveModel(config.defaultModel);
-	}
+	// Presets no longer hardcode a default model: always let the user pick one.
+	await pickModelForProvider(services, config);
 
 	void vscode.window.showInformationMessage(`Quasi: provider '${config.name}' added.`);
 }
+
+//#region Quick add
+
+type QuickAddItem =
+	| { label: string; description?: string; choice: 'preset'; preset: ProviderPreset }
+	| { label: string; description?: string; choice: 'other' };
+
+async function quickAddCommand(services: CommandServices): Promise<void> {
+	const keyInput = await promptKey();
+	if (keyInput === undefined || keyInput.trim().length === 0) {
+		return;
+	}
+	const key = normalizeKey(keyInput);
+
+	const candidates = detectProviderIdsForKey(key)
+		.map(id => providerPresets.find(preset => preset.id === id))
+		.filter((preset): preset is ProviderPreset => preset !== undefined);
+
+	// Mandatory confirmation: the user picks the host that receives the key.
+	const preset = await confirmQuickAddHost(candidates);
+	if (!preset) {
+		return; // cancelled: discard the in-memory key
+	}
+
+	let baseUrl = preset.config.baseUrl;
+	if (preset.id === 'custom') {
+		const entered = await promptBaseUrl('');
+		if (entered === undefined) {
+			return;
+		}
+		baseUrl = entered;
+	}
+	if (!(await confirmInsecure(baseUrl))) {
+		return;
+	}
+
+	const tempConfig: ProviderConfig = {
+		id: 'quick-add',
+		name: preset.config.name,
+		kind: preset.config.kind,
+		apiType: preset.config.apiType,
+		baseUrl,
+		requiresKey: true,
+	};
+
+	// Test + list models with the in-memory key only. It is not persisted yet,
+	// and it is never sent to any host other than the one just confirmed.
+	const provider = createProvider(tempConfig, async () => key);
+	let models: ModelInfo[] = [];
+	const controller = new AbortController();
+	const timeout = setTimeout(() => controller.abort(), 6000);
+	try {
+		models = await provider.listModels(controller.signal);
+	} catch (err) {
+		if (err instanceof ProviderError && err.status === 401) {
+			void vscode.window.showErrorMessage('Quasi: the API key was rejected (401). Nothing was saved.');
+			return;
+		}
+		if (!(err instanceof ProviderError && (err.status === 404 || err.status === 405))) {
+			const message = err instanceof Error ? err.message : String(err);
+			void vscode.window.showErrorMessage(`Quasi: could not connect to '${hostOf(baseUrl) ?? baseUrl}'. Nothing was saved. ${message}`);
+			return;
+		}
+		// 404/405: the server does not expose /models; offer manual model entry.
+		models = [];
+	} finally {
+		clearTimeout(timeout);
+	}
+
+	const model = await chooseModelId(preset.config.name, models, undefined);
+	if (model === undefined) {
+		return; // cancelled: discard the in-memory key, save nothing
+	}
+
+	// The key and provider are only persisted now, after the user confirmed a model.
+	const { providers } = readProviders();
+	const id = uniqueProviderId(slugify(preset.config.name), providers.map(existing => existing.id));
+	const config: ProviderConfig = { ...tempConfig, id };
+	await writeProviders(appendProvider(providers, config));
+	const keyResult = await services.keyStore.setKey(providerKeyId(id), key);
+	await writeActiveProviderId(id);
+	await writeActiveModel(model);
+	await reportKeySaved(keyResult);
+
+	void vscode.window.showInformationMessage(`Quasi: provider '${config.name}' added.`);
+}
+
+async function confirmQuickAddHost(candidates: ReadonlyArray<ProviderPreset>): Promise<ProviderPreset | undefined> {
+	const toItem = (preset: ProviderPreset): QuickAddItem => ({
+		label: preset.label,
+		description: describeQuickAddPreset(preset),
+		choice: 'preset',
+		preset
+	});
+	const cloudPresets = providerPresets.filter(preset => preset.config.requiresKey);
+
+	if (candidates.length === 0) {
+		const picked = await vscode.window.showQuickPick(
+			cloudPresets.map(toItem),
+			{ placeHolder: 'Choose the provider that issued this key' }
+		);
+		return picked && picked.choice === 'preset' ? picked.preset : undefined;
+	}
+
+	const items: QuickAddItem[] = [
+		...candidates.map(toItem),
+		{ label: '$(list-unordered) Choose another provider…', description: 'None of these? Pick from the full list', choice: 'other' }
+	];
+	const picked = await vscode.window.showQuickPick(items, { placeHolder: 'Confirm the host that will receive this key' });
+	if (!picked) {
+		return undefined;
+	}
+	if (picked.choice === 'preset') {
+		return picked.preset;
+	}
+
+	const other = await vscode.window.showQuickPick(cloudPresets.map(toItem), { placeHolder: 'Choose the provider that issued this key' });
+	return other && other.choice === 'preset' ? other.preset : undefined;
+}
+
+function describeQuickAddPreset(preset: ProviderPreset): string {
+	const host = hostOf(preset.config.baseUrl) ?? preset.config.baseUrl;
+	const base = describePreset(preset);
+	return base ? `${host} · ${base}` : host;
+}
+
+//#endregion
 
 async function editProviderCommand(services: CommandServices): Promise<void> {
 	const { providers } = readProviders();
@@ -288,37 +425,22 @@ async function pickModelForProvider(services: CommandServices, provider: Provide
 	try {
 		models = await providerFor(provider, services.keyStore).listModels(controller.signal);
 		services.statusBar.setState('online');
-	} catch {
+	} catch (err) {
 		services.statusBar.setState('offline');
-		// Fall through: allow choosing the default model or entering one manually.
+		if (err instanceof ProviderError && err.status === 401) {
+			void vscode.window.showErrorMessage(`Quasi: the API key for '${provider.name}' was rejected (401). Set it with "Quasi: Set API Key".`);
+			return;
+		}
+		// 404/405/other: fall through to manual model entry.
 	} finally {
 		clearTimeout(timeout);
 	}
 
-	const active = readActiveModel();
-	const items: Array<vscode.QuickPickItem & { model?: string }> = models.map(model => ({
-		label: model.id,
-		description: model.name,
-		model: model.id
-	}));
-	items.push({ label: MANUAL_MODEL, description: provider.defaultModel ? `default: ${provider.defaultModel}` : undefined });
-
-	const picked = await vscode.window.showQuickPick(items, { placeHolder: `Select a model for '${provider.name}'`, matchOnDescription: true });
-	if (!picked) {
+	const model = await chooseModelId(provider.name, models, readActiveModel() ?? provider.defaultModel);
+	if (model === undefined) {
 		return;
 	}
-
-	let model: string | undefined;
-	if (picked.label === MANUAL_MODEL) {
-		model = await vscode.window.showInputBox({ prompt: 'Model id', value: active ?? provider.defaultModel ?? '', ignoreFocusOut: true });
-		if (model === undefined) {
-			return;
-		}
-	} else {
-		model = picked.model;
-	}
-
-	await writeActiveModel(model?.trim() || undefined);
+	await writeActiveModel(model);
 }
 
 //#endregion
@@ -488,6 +610,41 @@ async function testProviderCommand(services: CommandServices, output: vscode.Out
 
 //#region Helpers
 
+/** Picker description for a preset, including doc-verification caveats. */
+function describePreset(preset: ProviderPreset): string {
+	const parts: string[] = [preset.config.kind === 'local' ? 'local' : 'cloud'];
+	if (preset.note) {
+		parts.push(preset.note);
+	}
+	if (preset.config.requiresKey && preset.keyPrefixVerified !== true) {
+		parts.push('prefix unverified');
+	}
+	return parts.join(' · ');
+}
+
+/** Show a model picker (with a manual-entry option). Undefined means cancelled. */
+async function chooseModelId(providerName: string, models: ReadonlyArray<ModelInfo>, active: string | undefined): Promise<string | undefined> {
+	const items: Array<vscode.QuickPickItem & { model?: string }> = models.map(model => ({
+		label: model.id,
+		description: model.name,
+		model: model.id
+	}));
+	items.push({ label: MANUAL_MODEL });
+
+	const picked = await vscode.window.showQuickPick(items, { placeHolder: `Select a model for '${providerName}'`, matchOnDescription: true });
+	if (!picked) {
+		return undefined;
+	}
+	if (picked.label === MANUAL_MODEL) {
+		const entered = await vscode.window.showInputBox({ prompt: 'Model id', value: active ?? '', ignoreFocusOut: true });
+		if (entered === undefined) {
+			return undefined;
+		}
+		return entered.trim() || undefined;
+	}
+	return picked.model;
+}
+
 async function pickProvider(providers: ReadonlyArray<ProviderConfig>, placeHolder: string): Promise<ProviderConfig | undefined> {
 	if (providers.length === 0) {
 		void vscode.window.showInformationMessage('Quasi: no providers configured yet.');
@@ -573,6 +730,10 @@ async function confirmHostChange(services: CommandServices, provider: ProviderCo
 
 async function storeKey(services: CommandServices, providerId: string, key: string): Promise<void> {
 	const result = await services.keyStore.setKey(providerKeyId(providerId), key);
+	await reportKeySaved(result);
+}
+
+async function reportKeySaved(result: SetKeyResult): Promise<void> {
 	if (result.persisted) {
 		void vscode.window.showInformationMessage('Quasi: API key saved to secure storage.');
 	} else {

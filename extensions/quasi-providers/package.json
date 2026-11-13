@@ -15,6 +15,7 @@
   "activationEvents": [
     "onStartupFinished",
     "onCommand:quasi.provider.add",
+    "onCommand:quasi.provider.quickAdd",
     "onCommand:quasi.provider.edit",
     "onCommand:quasi.provider.remove",
     "onCommand:quasi.provider.setKey",
@@ -28,6 +29,11 @@
       {
         "command": "quasi.provider.add",
         "title": "Quasi: Add Provider",
+        "category": "Quasi"
+      },
+      {
+        "command": "quasi.provider.quickAdd",
+        "title": "Quasi: Quick Add Provider",
         "category": "Quasi"
       },
       {
