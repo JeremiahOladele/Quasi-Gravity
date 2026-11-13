@@ -43,15 +43,15 @@ export class StatusBar implements vscode.Disposable {
 		if (!this.input.hasProviders) {
 			this.item.text = '$(add) Quasi: no model';
 			this.item.tooltip = 'No model provider configured. Click to add one.';
-			this.item.command = 'quasi.provider.add';
+			this.item.command = 'quasi.provider.menu';
 			this.item.show();
 			return;
 		}
 
 		if (!this.input.providerName) {
-			this.item.text = '$(question) Quasi: choose model';
-			this.item.tooltip = 'No active provider selected. Click to choose a model.';
-			this.item.command = 'quasi.provider.selectModel';
+			this.item.text = '$(add) Quasi: no model';
+			this.item.tooltip = 'No active model selected. Click to switch model or add a provider.';
+			this.item.command = 'quasi.provider.menu';
 			this.item.show();
 			return;
 		}
@@ -59,8 +59,8 @@ export class StatusBar implements vscode.Disposable {
 		const icon = this.state === 'online' ? '$(check)' : this.state === 'offline' ? '$(debug-disconnect)' : '$(question)';
 		const label = this.input.model ? `${this.input.providerName} · ${this.input.model}` : this.input.providerName;
 		this.item.text = `${icon} ${label}`;
-		this.item.tooltip = `Quasi model: ${label}\nConnection: ${this.state}\nClick to select a model.`;
-		this.item.command = 'quasi.provider.selectModel';
+		this.item.tooltip = `Quasi model: ${label}\nConnection: ${this.state}\nClick for actions.`;
+		this.item.command = 'quasi.provider.menu';
 		this.item.show();
 	}
 }

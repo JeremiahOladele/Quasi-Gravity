@@ -49,6 +49,8 @@ export function registerCommands(context: vscode.ExtensionContext, services: Com
 	register('quasi.provider.setKey', () => setApiKeyCommand(services));
 	register('quasi.provider.testConnection', () => testConnectionCommand(services));
 	register('quasi.provider.selectModel', () => selectModelCommand(services));
+	register('quasi.provider.menu', () => statusBarMenuCommand(services));
+	register('quasi.provider.clearActiveModel', () => clearActiveModelCommand());
 	register('quasi.provider.test', () => testProviderCommand(services, output));
 }
 
@@ -273,6 +275,11 @@ async function selectModelCommand(services: CommandServices): Promise<void> {
 		}
 	}
 
+	await pickModelForProvider(services, provider);
+}
+
+/** Sets the provider active and lets the user choose a model for it. */
+async function pickModelForProvider(services: CommandServices, provider: ProviderConfig): Promise<void> {
 	await writeActiveProviderId(provider.id);
 
 	let models: ModelInfo[] = [];
@@ -312,6 +319,100 @@ async function selectModelCommand(services: CommandServices): Promise<void> {
 	}
 
 	await writeActiveModel(model?.trim() || undefined);
+}
+
+//#endregion
+
+//#region Status bar menu
+
+interface IMenuAction extends vscode.QuickPickItem {
+	readonly action: 'model' | 'provider' | 'add' | 'manage' | 'clear';
+}
+
+async function statusBarMenuCommand(services: CommandServices): Promise<void> {
+	const { providers } = readProviders();
+	const items: IMenuAction[] = [];
+
+	if (providers.length === 0) {
+		items.push({ label: '$(add) Add provider', action: 'add' });
+	} else {
+		items.push({ label: '$(symbol-method) Switch model', action: 'model' });
+		if (providers.length >= 2) {
+			items.push({ label: '$(arrow-swap) Switch provider', action: 'provider' });
+		}
+		items.push({ label: '$(add) Add provider', action: 'add' });
+		items.push({ label: '$(settings-gear) Manage providers…', action: 'manage' });
+		if (readActiveProviderId() || readActiveModel()) {
+			items.push({ label: '$(clear-all) Clear active model', action: 'clear' });
+		}
+	}
+
+	const picked = await vscode.window.showQuickPick(items, { placeHolder: 'Quasi providers' });
+	if (!picked) {
+		return;
+	}
+
+	switch (picked.action) {
+		case 'model':
+			await selectModelCommand(services);
+			break;
+		case 'provider':
+			await switchProviderCommand(services);
+			break;
+		case 'add':
+			await addProviderCommand(services);
+			break;
+		case 'manage':
+			await manageProvidersCommand(services);
+			break;
+		case 'clear':
+			await clearActiveModelCommand();
+			break;
+	}
+}
+
+async function switchProviderCommand(services: CommandServices): Promise<void> {
+	const { providers } = readProviders();
+	const provider = await pickProvider(providers, 'Select the active provider');
+	if (!provider) {
+		return;
+	}
+	await pickModelForProvider(services, provider);
+}
+
+async function manageProvidersCommand(services: CommandServices): Promise<void> {
+	const picked = await vscode.window.showQuickPick(
+		[
+			{ label: '$(edit) Edit provider', action: 'edit' },
+			{ label: '$(trash) Remove provider', action: 'remove' },
+			{ label: '$(key) Set API key', action: 'setKey' },
+			{ label: '$(plug) Test connection', action: 'test' },
+		],
+		{ placeHolder: 'Manage providers' }
+	);
+	if (!picked) {
+		return;
+	}
+	switch (picked.action) {
+		case 'edit':
+			await editProviderCommand(services);
+			break;
+		case 'remove':
+			await removeProviderCommand(services);
+			break;
+		case 'setKey':
+			await setApiKeyCommand(services);
+			break;
+		case 'test':
+			await testConnectionCommand(services);
+			break;
+	}
+}
+
+async function clearActiveModelCommand(): Promise<void> {
+	await writeActiveProviderId(undefined);
+	await writeActiveModel(undefined);
+	void vscode.window.showInformationMessage('Quasi: active model cleared. Use the status bar menu to pick one.');
 }
 
 //#endregion
@@ -473,7 +574,7 @@ async function confirmHostChange(services: CommandServices, provider: ProviderCo
 async function storeKey(services: CommandServices, providerId: string, key: string): Promise<void> {
 	const result = await services.keyStore.setKey(providerKeyId(providerId), key);
 	if (result.persisted) {
-		void vscode.window.showInformationMessage('Quasi: API key saved to the OS keyring.');
+		void vscode.window.showInformationMessage('Quasi: API key saved to secure storage.');
 	} else {
 		const detail = result.keyringError ? ` (${result.keyringError})` : '';
 		void vscode.window.showWarningMessage(

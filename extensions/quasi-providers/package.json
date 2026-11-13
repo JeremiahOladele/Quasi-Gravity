@@ -20,6 +20,7 @@
     "onCommand:quasi.provider.setKey",
     "onCommand:quasi.provider.testConnection",
     "onCommand:quasi.provider.selectModel",
+    "onCommand:quasi.provider.clearActiveModel",
     "onCommand:quasi.provider.test"
   ],
   "contributes": {
@@ -52,6 +53,11 @@
       {
         "command": "quasi.provider.selectModel",
         "title": "Quasi: Select Active Model",
+        "category": "Quasi"
+      },
+      {
+        "command": "quasi.provider.clearActiveModel",
+        "title": "Quasi: Clear Active Model",
         "category": "Quasi"
       },
       {
