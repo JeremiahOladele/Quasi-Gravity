@@ -129,32 +129,33 @@ These apply to the product we are building, and to how you behave while building
 
 ## Feature roadmap (build in this order, one feature per session)
 
-0. Strip account and sign-in functionality, permanently (current task, see below)
-1. Provider layer: BYO API keys, Ollama, local waypoints, first-run defaults,
-   settings stored in an exportable JSON file (see "Settings and sync")
-2. Agent loop and chat panel (as a built-in extension, not on top of Copilot chat)
-3. Checkpoints (hidden git snapshots so any agent step can be rolled back)
+0. Strip built-in account functionality (DONE)
+1. Provider layer: BYO API keys, local waypoints, first-run defaults, exportable
+   settings (CURRENT, see `docs/PHASE1.md`)
+2. Agent loop and chat panel (built-in extension, web-compatible design)
+3. Checkpoints (hidden git snapshots, stored on a private ref)
 4. Artifacts (plans, task lists, screenshots, with inline comments)
-5. Agent Manager (multiple agents in parallel, one git worktree each)
-6. Browser agent (sandboxed profile, screenshots and recordings as artifacts)
-7. Optional folder-based sync of the settings file (see below)
-
-Not planned: user accounts. See "Accounts policy".
+5. Accounts server and `quasi-accounts` extension (invite-only)
+6. Shared model access (host relay with limits and revoke)
+7. Git-based collaboration features
+8. Web version (browser-only editing and chat, proposal workflow)
+9. Agent Manager, browser agent, real-time co-editing (only if still wanted)
 
 ## Accounts policy
 
-Quasi-Gravity is a private tool shared with a few friends. It has **no user
-accounts and no sign-in**. Models are reached with the user's own API keys or
-local model servers, so nothing needs to be tied to a login.
+Quasi-Gravity is a private tool for the maintainer and a few friends.
 
-- Do not add any login, signup, or account system.
-- Do not add any hosted backend or phone-home behavior.
-- Accounts may be reconsidered later (for example for collaboration features).
-  If so, they would be a separate optional extension using VS Code's
-  authentication provider API, not core patches. Do not build that now.
-- Because we are not rebuilding accounts soon, removal of the account UI is
-  permanent. Remove or hide the entry points fully. Keep the core
-  authentication service itself in place, since other code depends on it.
+- **The app must stay fully usable offline and without an account.** Accounts
+  and collaboration are optional layers on top, never a requirement for the core
+  editor, BYO-key models, or local waypoints.
+- **Accounts are NOT being built yet.** Do not add any login, signup, backend,
+  or phone-home behavior until a task explicitly asks for it (see "Planned
+  collaboration architecture").
+- When accounts are built, they live in a separate built-in extension
+  (`extensions/quasi-accounts`) using VS Code's authentication provider API.
+  No core patches for accounts.
+- Removal of the built-in Microsoft/GitHub account UI is permanent. Keep the
+  core authentication service in place, since other code depends on it.
 
 ## Settings and sync
 
@@ -177,20 +178,76 @@ removed. Our replacement is file-based and needs no server.
   `${workspaceFolder}`-style variables or relative paths where a path is needed.
 - Encoding: UTF-8, LF line endings, on every platform.
 
-### Current task: strip account functionality
+### Current task: Phase 1, provider layer
 
-Hide or disable (do not delete core services):
-- Accounts icon in the activity bar and its menu
-- "Sign In" button in the title bar
-- "Sign in to GitHub" prompts on the Welcome page
-- Copilot / Chat sign-in prompts and the built-in Copilot chat panel
-- Settings Sync entry points
-- Built-in GitHub / Microsoft authentication and Copilot extensions
-- `product.json`: `defaultChatAgent`, telemetry, and account endpoints
+See `docs/PHASE1.md`. Work one milestone at a time. Plan first and wait for
+approval before editing.
 
-Check whether this VS Code version has a setting such as `chat.disableAIFeatures`
-before removing the chat panel by hand. Prefer the setting if it exists.
-Report your plan first and wait for approval.
+## Web compatibility (future web version)
+
+A browser-based version will be built later from the same workbench. Everything
+we write must not block that. The web version is limited: browser-only editing
+and chatting with models. No terminal, no command execution.
+
+- Every capability sits behind an interface, with a local implementation now and
+  a remote one later: model providers, file access, command execution, storage,
+  and authentication.
+- Extensions must not import Node's `fs`, `child_process`, `os`, or `path`
+  directly in shared logic. Use `vscode.workspace.fs`, `vscode.Uri`, and the
+  `CommandRunner` interface. Desktop-only implementations live in clearly
+  separated files and are only loaded on desktop.
+- **Command execution** (replaces the earlier "pass arguments as arrays" note;
+  that rule still applies inside the desktop implementation): all terminal and
+  process execution goes through a `CommandRunner` interface. The desktop
+  implementation uses `execFile`/`spawn` with argument arrays. The web
+  implementation does not exist, so agent tools must declare their required
+  capabilities and be disabled when a capability is unavailable.
+- Keep core logic (provider adapters, settings schema, validation) in pure
+  TypeScript with no `vscode` or Node imports, so it can also run in a browser
+  or on the future server.
+- Keep UI (webviews) separate from logic, so the same UI can run on desktop or in
+  the browser.
+- No native modules in our extensions.
+- Network calls use the standard `fetch` API.
+
+## Shared model access rules (future)
+
+Friends may later use a key or local model that only one person has.
+
+- **A host's API key never leaves the host's device or server.** Others send
+  requests to the host, which calls the model and streams the answer back.
+  The key is never transmitted, synced, exported, or logged.
+- Shared access is implemented as another `Provider` (kind `remote`), so the
+  agent code does not care where the model lives.
+- The host must be able to see usage, set per-person limits, and revoke access.
+- The UI must state clearly that the host can see everyone's prompts.
+- Do not build the relay or the remote provider yet. Only keep the `Provider`
+  interface open for it (the `kind` field includes `remote`).
+
+## Planned collaboration architecture (future, do not build yet)
+
+Recorded here so today's choices stay compatible with it.
+
+- **Git is the single source of truth.** Each user has a local clone. GitHub is
+  the shared remote. The future server holds another clone that pulls from and
+  pushes to GitHub. Never build a separate code-sync protocol.
+- **Accounts:** a Quasi-Gravity account is the identity (not GitHub). One account
+  can link several GitHub accounts, bound per project, via a GitHub App with
+  per-repository permissions.
+- **Desktop sign-in:** device keypair (Ed25519), private key in `SecretStorage`,
+  public key registered on the account, challenge-response signing, plus TOTP
+  (authenticator app) with backup codes. Several devices per account, revocable.
+- **Web sign-in:** passkeys (WebAuthn) plus TOTP, mapped to the same account.
+- **Web edits are proposals only.** The web version never writes to GitHub. A web
+  change becomes a proposal branch on the server. A registered desktop user sees
+  "[account] proposed these changes from web" and must approve before the server
+  pushes to GitHub. Flag risky files in proposals (CI workflows, package scripts,
+  install hooks, shell scripts, `.env`).
+- **Audit:** each proposal records time, account, credential/session id, IP, and
+  user agent, with a short reference code for lookup by the maintainer. A
+  "Report / lock" action rejects it and freezes that account's web sessions.
+- The server API is versioned and token-authenticated. The desktop app and web
+  app are both clients of it.
 
 ## Definition of done (for any task)
 
