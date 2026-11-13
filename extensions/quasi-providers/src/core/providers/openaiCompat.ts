@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { redactSecrets } from '../redact';
 import { parseSseEvents } from '../sse';
 import { ChatChunk, ChatRequest, KeyResolver, ModelInfo, Provider, ProviderConfig, ProviderError, normalizeBaseUrl } from '../types';
 
@@ -58,10 +59,10 @@ export class OpenAICompatProvider implements Provider {
 		try {
 			res = await fetch(this.endpoint('/models'), { method: 'GET', headers: this.headers(key), signal });
 		} catch (err) {
-			throw new ProviderError(errorMessage(err));
+			throw new ProviderError(redactSecrets(errorMessage(err), key));
 		}
 		if (!res.ok) {
-			throw new ProviderError(await responseMessage(res), res.status);
+			throw new ProviderError(redactSecrets(await responseMessage(res), key), res.status);
 		}
 		const json = await res.json() as OpenAIModelListResponse;
 		const data = json.data ?? [];
@@ -90,12 +91,12 @@ export class OpenAICompatProvider implements Provider {
 				signal,
 			});
 		} catch (err) {
-			yield { type: 'error', message: errorMessage(err) };
+			yield { type: 'error', message: redactSecrets(errorMessage(err), key) };
 			return;
 		}
 
 		if (!res.ok) {
-			yield { type: 'error', message: await responseMessage(res) };
+			yield { type: 'error', message: redactSecrets(await responseMessage(res), key) };
 			return;
 		}
 
@@ -143,7 +144,7 @@ export class OpenAICompatProvider implements Provider {
 				}
 			}
 		} catch (err) {
-			yield { type: 'error', message: errorMessage(err) };
+			yield { type: 'error', message: redactSecrets(errorMessage(err), key) };
 			return;
 		}
 
