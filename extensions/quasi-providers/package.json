@@ -1,0 +1,32 @@
+{
+  "name": "quasi-providers",
+  "displayName": "Quasi Providers",
+  "description": "Bring-your-own-key and local model providers for Quasi-Gravity.",
+  "version": "1.0.0",
+  "publisher": "quasi-gravity",
+  "license": "MIT",
+  "engines": {
+    "vscode": "*"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./out/host/extension.js",
+  "activationEvents": [
+    "onCommand:quasi.provider.test"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "quasi.provider.test",
+        "title": "Quasi: Test Provider (dev)",
+        "category": "Quasi"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "gulp compile-extension:quasi-providers",
+    "watch": "gulp watch-extension:quasi-providers",
+    "test": "node ../../node_modules/mocha/bin/mocha \"out/test/**/*.test.js\""
+  }
+}

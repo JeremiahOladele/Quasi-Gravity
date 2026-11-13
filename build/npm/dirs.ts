@@ -50,6 +50,7 @@ export const workspaceMembers = [
 	'extensions/notebook-renderers',
 	'extensions/npm',
 	'extensions/php-language-features',
+	'extensions/quasi-providers', // QUASI: built-in provider layer (Phase 1)
 	'extensions/references-view',
 	'extensions/search-result',
 	'extensions/simple-browser',
