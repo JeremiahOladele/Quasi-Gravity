@@ -38,8 +38,8 @@ export interface ToolDef {
 	readonly parameters: JsonSchema;
 	readonly requires: ReadonlyArray<Capability>;
 	readonly risk: ToolRisk;
-	/** Pure decision: return a prompt when this call needs approval. */
-	readonly needsApproval?: (args: Record<string, unknown>) => ApprovalPrompt | undefined;
+	/** Decision: return a prompt when this call needs approval. May do async checks (e.g. symlinks). */
+	readonly needsApproval?: (args: Record<string, unknown>, signal: AbortSignal) => ApprovalPrompt | undefined | Promise<ApprovalPrompt | undefined>;
 	run(args: Record<string, unknown>, signal: AbortSignal): Promise<ToolResult>;
 }
 

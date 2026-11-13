@@ -7,6 +7,7 @@ import { classifyChatError } from './errors';
 import { ChatChunk, ChatMessage, ChatRequest, ToolCall } from './providerApi';
 import { HostErrorKind } from './protocol';
 import {
+	ApprovalPrompt,
 	ToolDef,
 	ToolRegistry,
 	ToolResult,
@@ -141,9 +142,19 @@ async function runOneTool(
 		return errorOutcome(validation.error);
 	}
 
-	const prompt = tool.needsApproval?.(validation.value);
+	let prompt: ApprovalPrompt | undefined;
+	try {
+		prompt = tool.needsApproval ? await tool.needsApproval(validation.value, options.signal) : undefined;
+	} catch {
+		return errorOutcome('Could not evaluate whether this call needs approval.');
+	}
 	if (prompt) {
-		const approved = await options.approvalBroker.requestApproval(prompt, options.signal);
+		let approved: boolean;
+		try {
+			approved = await options.approvalBroker.requestApproval(prompt, options.signal);
+		} catch {
+			return errorOutcome('Approval could not be requested.');
+		}
 		if (options.signal.aborted) {
 			return { kind: 'aborted' };
 		}
@@ -183,9 +194,6 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
 	const boundary = createBoundary();
 	const history: ChatMessage[] = options.history.map(message => ({ ...message }));
 	history.push({ role: 'user', content: options.userText });
-	if (options.systemPrompt.length > 0) {
-		history.unshift({ role: 'system', content: options.systemPrompt });
-	}
 
 	const registry = new ToolRegistry(options.tools);
 	const failures = new Map<string, number>();
@@ -221,9 +229,12 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
 		let failure: ChatFailure | undefined;
 
 		try {
+			const requestMessages: ChatMessage[] = options.systemPrompt.length > 0
+				? [{ role: 'system', content: options.systemPrompt }, ...history]
+				: history;
 			const request: ChatRequest = {
 				model: options.model,
-				messages: history,
+				messages: requestMessages,
 				...(useTools ? { tools: buildToolSpecs(options.tools) } : {})
 			};
 			for await (const chunk of options.provider.chat(request, options.signal)) {
