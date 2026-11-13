@@ -12,7 +12,45 @@
     "Other"
   ],
   "main": "./out/host/extension.js",
-  "activationEvents": [],
+  "activationEvents": [
+    "onView:quasi.chat.view",
+    "onCommand:quasi.chat.open",
+    "onCommand:quasi.chat.newChat"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "quasi.chat.open",
+        "title": "Quasi: Open Chat",
+        "category": "Quasi"
+      },
+      {
+        "command": "quasi.chat.newChat",
+        "title": "Quasi: New Chat",
+        "category": "Quasi"
+      }
+    ],
+    "viewsContainers": {
+      "secondarySidebar": [
+        {
+          "id": "quasiChat",
+          "title": "Quasi Chat",
+          "icon": "$(comment-discussion)"
+        }
+      ]
+    },
+    "views": {
+      "quasiChat": [
+        {
+          "id": "quasi.chat.view",
+          "type": "webview",
+          "name": "Chat",
+          "icon": "$(comment-discussion)",
+          "contextualTitle": "Quasi Chat"
+        }
+      ]
+    }
+  },
   "scripts": {
     "compile": "gulp compile-extension:quasi-agent",
     "watch": "gulp watch-extension:quasi-agent",

@@ -58,7 +58,13 @@ export type ChatChunk =
 	| { type: 'done'; usage?: { inputTokens?: number; outputTokens?: number } }
 	| { type: 'error'; message: string; status?: number };
 
+export interface AgentProviderConfig {
+	readonly kind: string;
+	readonly baseUrl: string;
+}
+
 export interface AgentProvider {
+	readonly config?: AgentProviderConfig;
 	chat(req: ChatRequest, signal?: AbortSignal): AsyncIterable<ChatChunk>;
 	getModelCapabilities?(modelId: string, signal?: AbortSignal): Promise<Partial<Capabilities> | undefined>;
 }

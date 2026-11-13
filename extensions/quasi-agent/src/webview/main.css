@@ -1,0 +1,133 @@
+:root {
+	color-scheme: light dark;
+}
+
+html, body {
+	height: 100%;
+	margin: 0;
+	padding: 0;
+}
+
+body {
+	display: flex;
+	flex-direction: column;
+	font-family: var(--vscode-font-family);
+	font-size: var(--vscode-font-size);
+	color: var(--vscode-foreground);
+	background: var(--vscode-sideBar-background);
+}
+
+#header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	padding: 6px 10px;
+	border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+#active {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 0.9em;
+	opacity: 0.9;
+}
+
+#messages {
+	flex: 1 1 auto;
+	overflow-y: auto;
+	padding: 8px 10px;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.entry {
+	display: flex;
+	flex-direction: column;
+}
+
+.entry .text {
+	white-space: pre-wrap;
+	word-break: break-word;
+	padding: 6px 8px;
+	border-radius: 6px;
+	background: var(--vscode-editorWidget-background);
+}
+
+.entry.user .text {
+	background: var(--vscode-input-background);
+}
+
+.entry.notice .text {
+	background: transparent;
+	font-style: italic;
+	opacity: 0.8;
+	padding-left: 0;
+}
+
+#error {
+	margin: 0 10px 8px;
+	padding: 8px;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	border-radius: 6px;
+	background: var(--vscode-inputValidation-errorBackground, rgba(255, 0, 0, 0.1));
+	border: 1px solid var(--vscode-inputValidation-errorBorder, transparent);
+}
+
+#error[hidden] {
+	display: none;
+}
+
+#errorText {
+	flex: 1 1 auto;
+}
+
+#composer {
+	border-top: 1px solid var(--vscode-panel-border);
+	padding: 8px 10px;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+#input {
+	width: 100%;
+	box-sizing: border-box;
+	resize: vertical;
+	min-height: 3em;
+	color: var(--vscode-input-foreground);
+	background: var(--vscode-input-background);
+	border: 1px solid var(--vscode-input-border, transparent);
+	border-radius: 4px;
+	padding: 6px;
+	font-family: inherit;
+	font-size: inherit;
+}
+
+#actions {
+	display: flex;
+	gap: 6px;
+	justify-content: flex-end;
+}
+
+button {
+	color: var(--vscode-button-foreground);
+	background: var(--vscode-button-background);
+	border: none;
+	border-radius: 3px;
+	padding: 4px 10px;
+	cursor: pointer;
+}
+
+button:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+
+button:not(:disabled):hover {
+	background: var(--vscode-button-hoverBackground);
+}
