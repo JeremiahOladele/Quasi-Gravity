@@ -138,4 +138,15 @@ describe('providerPresets', () => {
 			}
 		}
 	});
+
+	it('declares free authenticated key checks only where verified', () => {
+		const openrouter = providerPresets.find(preset => preset.id === 'openrouter');
+		assert.strictEqual(openrouter?.keyCheck?.url, 'https://openrouter.ai/api/v1/auth/key');
+		const deepseek = providerPresets.find(preset => preset.id === 'deepseek');
+		assert.strictEqual(deepseek?.keyCheck?.url, 'https://api.deepseek.com/user/balance');
+		const moonshot = providerPresets.find(preset => preset.id === 'moonshot');
+		assert.strictEqual(moonshot?.keyCheck?.url, 'https://api.moonshot.ai/v1/users/me/balance');
+		const groq = providerPresets.find(preset => preset.id === 'groq');
+		assert.strictEqual(groq?.keyCheck, undefined);
+	});
 });

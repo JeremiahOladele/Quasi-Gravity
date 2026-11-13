@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { KeyCheck } from '../keyCheck';
 import { ProviderConfig } from '../types';
 
 export interface ProviderPreset {
@@ -13,6 +14,8 @@ export interface ProviderPreset {
 	readonly note?: string;
 	/** Whether the API-key prefix used for detection is documented by the provider. */
 	readonly keyPrefixVerified?: boolean;
+	/** Free, authenticated endpoint that validates the key (verified from docs). */
+	readonly keyCheck?: KeyCheck;
 }
 
 /**
@@ -28,7 +31,8 @@ export const providerPresets: ReadonlyArray<ProviderPreset> = [
 	{
 		id: 'deepseek',
 		label: 'DeepSeek',
-		config: { name: 'DeepSeek', kind: 'cloud', apiType: 'openai-compat', baseUrl: 'https://api.deepseek.com', requiresKey: true }
+		config: { name: 'DeepSeek', kind: 'cloud', apiType: 'openai-compat', baseUrl: 'https://api.deepseek.com', requiresKey: true },
+		keyCheck: { url: 'https://api.deepseek.com/user/balance' }
 	},
 	{
 		id: 'openai',
@@ -39,7 +43,8 @@ export const providerPresets: ReadonlyArray<ProviderPreset> = [
 		id: 'openrouter',
 		label: 'OpenRouter',
 		config: { name: 'OpenRouter', kind: 'cloud', apiType: 'openai-compat', baseUrl: 'https://openrouter.ai/api/v1', requiresKey: true },
-		keyPrefixVerified: true
+		keyPrefixVerified: true,
+		keyCheck: { url: 'https://openrouter.ai/api/v1/auth/key' }
 	},
 	{
 		id: 'groq',
@@ -69,7 +74,8 @@ export const providerPresets: ReadonlyArray<ProviderPreset> = [
 	{
 		id: 'moonshot',
 		label: 'Moonshot',
-		config: { name: 'Moonshot', kind: 'cloud', apiType: 'openai-compat', baseUrl: 'https://api.moonshot.ai/v1', requiresKey: true }
+		config: { name: 'Moonshot', kind: 'cloud', apiType: 'openai-compat', baseUrl: 'https://api.moonshot.ai/v1', requiresKey: true },
+		keyCheck: { url: 'https://api.moonshot.ai/v1/users/me/balance' }
 	},
 	{
 		id: 'anthropic',
