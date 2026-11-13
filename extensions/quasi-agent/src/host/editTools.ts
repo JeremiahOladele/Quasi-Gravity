@@ -13,7 +13,7 @@ import { ApprovalPrompt, ApprovalReasonCode, JsonSchema, ToolDef, ToolResult } f
 import { resolveSandboxPath } from '../core/tools/pathPolicy';
 import { requiresWriteApproval } from '../core/tools/protectedPaths';
 import { UndoBook, UndoKind } from '../core/tools/undo';
-import { isWriteTargetOutside } from './symlinks';
+import { isPathInside, realPathForWrite, realPathOrUndefined } from './symlinks';
 import { FileWriter } from './fileWriter';
 
 const CASE_INSENSITIVE = process.platform === 'win32' || process.platform === 'darwin';
@@ -46,6 +46,8 @@ interface Target {
 	readonly display: string;
 	readonly outside: boolean;
 	readonly escape: boolean;
+	/** Real target relative to the real workspace root, when it stays inside. */
+	readonly realRelative?: string;
 }
 
 interface ExistingFile {
@@ -83,13 +85,19 @@ async function resolveTarget(rootPath: string, candidate: string): Promise<Targe
 	if (resolution.outsideWorkspace && resolution.reason === 'path escapes the workspace') {
 		return { absolute, display: trimmed, outside: true, escape: true };
 	}
-	const symlinkOutside = await isWriteTargetOutside(rootPath, absolute, CASE_INSENSITIVE);
-	const outside = resolution.outsideWorkspace || symlinkOutside;
+	const realRoot = await realPathOrUndefined(rootPath);
+	const realTarget = await realPathForWrite(absolute);
+	const realOutside = !!realRoot && !!realTarget && !isPathInside(realRoot, realTarget, CASE_INSENSITIVE);
+	const outside = resolution.outsideWorkspace || realOutside;
+	const realRelative = realRoot && realTarget && !realOutside
+		? path.relative(realRoot, realTarget).split(path.sep).join('/')
+		: undefined;
 	return {
 		absolute,
 		display: outside ? absolute : (resolution.relativePath || trimmed),
 		outside,
-		escape: false
+		escape: false,
+		realRelative
 	};
 }
 
@@ -243,7 +251,7 @@ export function createEditTools(options: EditToolsOptions): ToolDef[] {
 		after: string,
 		kind: 'write' | 'delete' | 'destructive'
 	): ApprovalPrompt | undefined => {
-		const protectedPath = requiresWriteApproval(target.outside ? candidate : target.display);
+		const protectedPath = requiresWriteApproval(target.realRelative ?? (target.outside ? candidate : target.display));
 		let reason: ApprovalReasonCode | undefined;
 		if (kind === 'delete') {
 			reason = 'delete';
