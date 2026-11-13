@@ -6,7 +6,7 @@
 import * as vscode from 'vscode';
 import { findProvider } from '../core/providerConfig';
 import { ProviderConfig } from '../core/types';
-import { registerTestProviderCommand } from './commands';
+import { registerCommands } from './commands';
 import { providerFor } from './providerRuntime';
 import { KeyStore, VscodeSecretBackend } from './secrets';
 import { readActiveModel, readActiveProviderId, readProviders } from './settings';
@@ -75,5 +75,5 @@ export function activate(context: vscode.ExtensionContext): void {
 		}
 	}));
 
-	registerTestProviderCommand(context);
+	registerCommands(context, { keyStore, statusBar });
 }
