@@ -201,3 +201,128 @@ details.entry.tool pre {
 .entry.approval.denied {
 	border-color: var(--vscode-errorForeground);
 }
+
+.entry.markdown {
+	gap: 4px;
+}
+
+.entry.markdown h1,
+.entry.markdown h2,
+.entry.markdown h3,
+.entry.markdown h4,
+.entry.markdown h5,
+.entry.markdown h6 {
+	margin: 6px 0 2px;
+	line-height: 1.25;
+}
+
+.entry.markdown h1 { font-size: 1.35em; }
+.entry.markdown h2 { font-size: 1.2em; }
+.entry.markdown h3 { font-size: 1.1em; }
+
+.entry.markdown p {
+	margin: 2px 0;
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+.entry.markdown ul,
+.entry.markdown ol {
+	margin: 4px 0;
+	padding-left: 1.4em;
+}
+
+.entry.markdown li {
+	margin: 1px 0;
+}
+
+.entry.markdown blockquote {
+	margin: 4px 0;
+	padding: 2px 8px;
+	border-left: 3px solid var(--vscode-textBlockQuote-border, var(--vscode-panel-border));
+	opacity: 0.9;
+}
+
+.entry.markdown hr {
+	border: none;
+	border-top: 1px solid var(--vscode-panel-border);
+	margin: 8px 0;
+}
+
+.entry.markdown code {
+	font-family: var(--vscode-editor-font-family, monospace);
+	background: var(--vscode-textCodeBlock-background, rgba(127, 127, 127, 0.15));
+	padding: 0 3px;
+	border-radius: 3px;
+}
+
+.md-code {
+	margin: 6px 0;
+	border: 1px solid var(--vscode-panel-border);
+	border-radius: 6px;
+	overflow: hidden;
+}
+
+.md-code-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 2px 8px;
+	background: var(--vscode-editorWidget-background);
+	font-size: 0.8em;
+	opacity: 0.9;
+}
+
+.md-code pre {
+	margin: 0;
+	padding: 8px;
+	overflow: auto;
+	max-height: 360px;
+	white-space: pre;
+}
+
+.md-code pre code {
+	background: transparent;
+	padding: 0;
+	border-radius: 0;
+	font-family: var(--vscode-editor-font-family, monospace);
+}
+
+.md-copy {
+	padding: 1px 8px;
+	font-size: 0.9em;
+}
+
+.entry.markdown table {
+	border-collapse: collapse;
+	margin: 6px 0;
+	display: block;
+	overflow-x: auto;
+}
+
+.entry.markdown th,
+.entry.markdown td {
+	border: 1px solid var(--vscode-panel-border);
+	padding: 3px 8px;
+}
+
+.entry.markdown th {
+	background: var(--vscode-editorWidget-background);
+}
+
+.md-link {
+	color: var(--vscode-textLink-foreground);
+	cursor: pointer;
+	text-decoration: underline;
+	word-break: break-word;
+}
+
+.md-link:hover {
+	color: var(--vscode-textLink-activeForeground, var(--vscode-textLink-foreground));
+}
+
+.md-image {
+	opacity: 0.85;
+	font-style: italic;
+	word-break: break-word;
+}

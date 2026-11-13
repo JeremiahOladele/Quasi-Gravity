@@ -13,9 +13,12 @@
 
 	let streaming = false;
 	let errorActionKind = null;
-	let currentAssistantEl = null;
 	let lastToolEl = null;
-	const approvalCards = new Map();
+	let rafHandle = 0;
+	let renderEpoch = 0;
+	let pendingMarkdown = null;
+	let approvalCards = new Map();
+	let assistantContainers = new Map();
 
 	function isHostFrame(message) {
 		if (!message || typeof message !== 'object' || typeof message.type !== 'string') {
@@ -26,8 +29,8 @@
 				return Array.isArray(message.entries);
 			case 'state':
 				return typeof message.streaming === 'boolean';
-			case 'assistantDelta':
-				return typeof message.text === 'string';
+			case 'assistantMarkdown':
+				return typeof message.messageId === 'string' && message.messageId.length > 0 && Array.isArray(message.blocks);
 			case 'assistantDone':
 				return true;
 			case 'assistantError':
@@ -51,51 +54,271 @@
 		}
 	}
 
-	function createEntry(kind, text) {
-		const entry = document.createElement('div');
-		entry.className = 'entry ' + kind;
-		const body = document.createElement('div');
-		body.className = 'text';
-		body.textContent = text;
+	function el(tag, className) {
+		const element = document.createElement(tag);
+		if (className) {
+			element.className = className;
+		}
+		return element;
+	}
+
+	function text(value) {
+		return document.createTextNode(value);
+	}
+
+	function createEntry(kind, value) {
+		const entry = el('div', 'entry ' + kind);
+		const body = el('div', 'text');
+		body.textContent = value;
 		entry.appendChild(body);
 		return entry;
 	}
 
 	function createToolEntry(name, args, summary, isError) {
-		const details = document.createElement('details');
-		details.className = 'entry tool' + (isError ? ' tool-error' : '');
-		const summaryEl = document.createElement('summary');
+		const details = el('details', 'entry tool' + (isError ? ' tool-error' : ''));
+		const summaryEl = el('summary');
 		summaryEl.textContent = 'Tool: ' + name;
 		details.appendChild(summaryEl);
-		const argsEl = document.createElement('pre');
+		const argsEl = el('pre');
 		argsEl.textContent = args;
 		details.appendChild(argsEl);
-		const result = document.createElement('div');
-		result.className = 'tool-result';
+		const result = el('div', 'tool-result');
 		result.textContent = summary;
 		details.appendChild(result);
 		return details;
+	}
+
+	function isNearBottom() {
+		return messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < 80;
 	}
 
 	function scrollToBottom() {
 		messagesEl.scrollTop = messagesEl.scrollHeight;
 	}
 
-	function resetPointers() {
-		currentAssistantEl = null;
-		lastToolEl = null;
+	function renderInline(nodes, parent, messageId) {
+		if (!Array.isArray(nodes)) {
+			return;
+		}
+		for (const node of nodes) {
+			if (!node || typeof node.type !== 'string') {
+				continue;
+			}
+			switch (node.type) {
+				case 'text':
+					parent.appendChild(text(String(node.text || '')));
+					break;
+				case 'code': {
+					const code = el('code');
+					code.textContent = String(node.text || '');
+					parent.appendChild(code);
+					break;
+				}
+				case 'strong': {
+					const strong = el('strong');
+					renderInline(node.children, strong, messageId);
+					parent.appendChild(strong);
+					break;
+				}
+				case 'em': {
+					const em = el('em');
+					renderInline(node.children, em, messageId);
+					parent.appendChild(em);
+					break;
+				}
+				case 'link': {
+					const href = String(node.href || '');
+					const link = el('span', 'md-link');
+					link.setAttribute('role', 'link');
+					link.tabIndex = 0;
+					link.title = href;
+					renderInline(node.children, link, messageId);
+					link.appendChild(text(' (' + href + ')'));
+					const open = function () {
+						vscode.postMessage({ type: 'openLink', url: href });
+					};
+					link.addEventListener('click', open);
+					link.addEventListener('keydown', function (event) {
+						if (event.key === 'Enter' || event.key === ' ') {
+							event.preventDefault();
+							open();
+						}
+					});
+					parent.appendChild(link);
+					break;
+				}
+				case 'image': {
+					const image = el('span', 'md-image');
+					image.textContent = '[image: ' + String(node.alt || '') + ' — ' + String(node.src || '') + ']';
+					parent.appendChild(image);
+					break;
+				}
+				case 'break':
+					parent.appendChild(el('br'));
+					break;
+			}
+		}
+	}
+
+	function renderBlocks(blocks, parent, messageId) {
+		if (!Array.isArray(blocks)) {
+			return;
+		}
+		blocks.forEach(function (block, index) {
+			if (!block || typeof block.type !== 'string') {
+				return;
+			}
+			switch (block.type) {
+				case 'heading': {
+					const level = Math.min(6, Math.max(1, Number(block.level) || 1));
+					const heading = el('h' + level);
+					renderInline(block.children, heading, messageId);
+					parent.appendChild(heading);
+					break;
+				}
+				case 'paragraph': {
+					const paragraph = el('p');
+					renderInline(block.children, paragraph, messageId);
+					parent.appendChild(paragraph);
+					break;
+				}
+				case 'code': {
+					const wrapper = el('div', 'md-code');
+					const header = el('div', 'md-code-header');
+					const language = el('span', 'md-code-lang');
+					language.textContent = String(block.language || 'code');
+					header.appendChild(language);
+					const copy = el('button', 'md-copy');
+					copy.type = 'button';
+					copy.textContent = 'Copy';
+					copy.addEventListener('click', function () {
+						vscode.postMessage({ type: 'copy', messageId: messageId, blockIndex: index });
+					});
+					header.appendChild(copy);
+					const pre = el('pre');
+					const code = el('code');
+					code.textContent = String(block.text || '');
+					pre.appendChild(code);
+					wrapper.appendChild(header);
+					wrapper.appendChild(pre);
+					parent.appendChild(wrapper);
+					break;
+				}
+				case 'list': {
+					const list = el(block.ordered ? 'ol' : 'ul');
+					if (block.ordered && Number(block.start) > 1) {
+						list.setAttribute('start', String(block.start));
+					}
+					for (const item of (block.items || [])) {
+						const li = el('li');
+						const itemBlocks = Array.isArray(item) ? item : [];
+						if (itemBlocks.length === 1 && itemBlocks[0] && itemBlocks[0].type === 'paragraph') {
+							renderInline(itemBlocks[0].children, li, messageId);
+						} else {
+							renderBlocks(itemBlocks, li, messageId);
+						}
+						list.appendChild(li);
+					}
+					parent.appendChild(list);
+					break;
+				}
+				case 'blockquote': {
+					const quote = el('blockquote');
+					renderBlocks(block.blocks, quote, messageId);
+					parent.appendChild(quote);
+					break;
+				}
+				case 'table': {
+					const table = el('table');
+					const thead = el('thead');
+					const headerRow = el('tr');
+					(block.header || []).forEach(function (cell, cellIndex) {
+						const th = el('th');
+						if (block.alignment && block.alignment[cellIndex]) {
+							th.style.textAlign = block.alignment[cellIndex];
+						}
+						renderInline(cell, th, messageId);
+						headerRow.appendChild(th);
+					});
+					thead.appendChild(headerRow);
+					table.appendChild(thead);
+					const tbody = el('tbody');
+					for (const row of (block.rows || [])) {
+						const tr = el('tr');
+						(row || []).forEach(function (cell, cellIndex) {
+							const td = el('td');
+							if (block.alignment && block.alignment[cellIndex]) {
+								td.style.textAlign = block.alignment[cellIndex];
+							}
+							renderInline(cell, td, messageId);
+							tr.appendChild(td);
+						});
+						tbody.appendChild(tr);
+					}
+					table.appendChild(tbody);
+					parent.appendChild(table);
+					break;
+				}
+				case 'hr':
+					parent.appendChild(el('hr'));
+					break;
+			}
+		});
+	}
+
+	function getAssistantContainer(messageId) {
+		let container = assistantContainers.get(messageId);
+		if (!container) {
+			container = el('div', 'entry assistant markdown');
+			messagesEl.appendChild(container);
+			assistantContainers.set(messageId, container);
+		}
+		return container;
+	}
+
+	function scheduleMarkdown(messageId, blocks) {
+		pendingMarkdown = { messageId: messageId, blocks: blocks };
+		if (rafHandle !== 0) {
+			return;
+		}
+		const epoch = renderEpoch;
+		rafHandle = window.requestAnimationFrame(function () {
+			rafHandle = 0;
+			const pending = pendingMarkdown;
+			pendingMarkdown = null;
+			if (!pending || epoch !== renderEpoch) {
+				return;
+			}
+			const atBottom = isNearBottom();
+			const container = getAssistantContainer(pending.messageId);
+			container.textContent = '';
+			renderBlocks(pending.blocks, container, pending.messageId);
+			if (atBottom) {
+				scrollToBottom();
+			}
+		});
 	}
 
 	function renderHistory(entries) {
+		renderEpoch++;
+		pendingMarkdown = null;
+		if (rafHandle !== 0) {
+			window.cancelAnimationFrame(rafHandle);
+			rafHandle = 0;
+		}
 		messagesEl.textContent = '';
-		approvalCards.clear();
-		resetPointers();
+		approvalCards = new Map();
+		assistantContainers = new Map();
+		lastToolEl = null;
 		for (const item of entries) {
 			if (!item || typeof item.kind !== 'string') {
 				continue;
 			}
 			if (item.kind === 'tool') {
 				messagesEl.appendChild(createToolEntry(String(item.name || ''), String(item.args || ''), String(item.summary || ''), !!item.isError));
+			} else if (item.kind === 'assistant' && typeof item.id === 'string' && item.id.length > 0 && Array.isArray(item.blocks)) {
+				const container = getAssistantContainer(item.id);
+				renderBlocks(item.blocks, container, item.id);
 			} else if (item.kind === 'user' || item.kind === 'assistant' || item.kind === 'notice') {
 				messagesEl.appendChild(createEntry(item.kind, String(item.text || '')));
 			}
@@ -103,20 +326,7 @@
 		scrollToBottom();
 	}
 
-	function appendDelta(text) {
-		if (!currentAssistantEl) {
-			currentAssistantEl = createEntry('assistant', '');
-			messagesEl.appendChild(currentAssistantEl);
-		}
-		const body = currentAssistantEl.querySelector('.text');
-		if (body) {
-			body.textContent += text;
-		}
-		scrollToBottom();
-	}
-
 	function showToolCall(name, args) {
-		currentAssistantEl = null;
 		lastToolEl = createToolEntry(name, args, 'running…', false);
 		messagesEl.appendChild(lastToolEl);
 		scrollToBottom();
@@ -136,34 +346,28 @@
 		scrollToBottom();
 	}
 
-	function showNotice(text) {
-		resetPointers();
-		messagesEl.appendChild(createEntry('notice', text));
+	function showNotice(value) {
+		messagesEl.appendChild(createEntry('notice', value));
 		scrollToBottom();
 	}
 
 	function showApproval(request) {
-		resetPointers();
-		const card = document.createElement('div');
-		card.className = 'entry approval';
-		const title = document.createElement('div');
-		title.className = 'approval-title';
+		const card = el('div', 'entry approval');
+		const title = el('div', 'approval-title');
 		title.textContent = request.reason === 'sensitive-file' ? 'Approval required: sensitive file' : 'Approval required: outside the workspace';
 		card.appendChild(title);
-		const detail = document.createElement('pre');
-		detail.className = 'approval-detail';
+		const detail = el('pre', 'approval-detail');
 		detail.textContent = request.detail + '\nTool: ' + request.toolName;
 		card.appendChild(detail);
-		const actions = document.createElement('div');
-		actions.className = 'approval-actions';
-		const allow = document.createElement('button');
+		const actions = el('div', 'approval-actions');
+		const allow = el('button');
 		allow.type = 'button';
 		allow.textContent = 'Allow';
-		const deny = document.createElement('button');
+		const deny = el('button');
 		deny.type = 'button';
 		deny.textContent = 'Deny';
 		let resolved = false;
-		const finish = approved => {
+		const finish = function (approved) {
 			if (resolved) {
 				return;
 			}
@@ -171,8 +375,7 @@
 			allow.disabled = true;
 			deny.disabled = true;
 			card.classList.add(approved ? 'approved' : 'denied');
-			const status = document.createElement('div');
-			status.className = 'approval-status';
+			const status = el('div', 'approval-status');
 			status.textContent = approved ? 'Allowed' : 'Denied';
 			card.appendChild(status);
 		};
@@ -247,12 +450,11 @@
 				setActive(message.active);
 				setStreaming(message.streaming);
 				break;
-			case 'assistantDelta':
-				appendDelta(message.text);
+			case 'assistantMarkdown':
+				scheduleMarkdown(message.messageId, message.blocks);
 				break;
 			case 'assistantDone':
 				setStreaming(false);
-				currentAssistantEl = null;
 				break;
 			case 'assistantError':
 				showError(message.kind, message.message);
@@ -274,10 +476,17 @@
 				showNotice(message.text);
 				break;
 			case 'cleared':
+				renderEpoch++;
+				pendingMarkdown = null;
+				if (rafHandle !== 0) {
+					window.cancelAnimationFrame(rafHandle);
+					rafHandle = 0;
+				}
 				messagesEl.textContent = '';
+				approvalCards = new Map();
+				assistantContainers = new Map();
+				lastToolEl = null;
 				clearError();
-				approvalCards.clear();
-				resetPointers();
 				break;
 			case 'busy':
 				setStreaming(message.value);
@@ -297,12 +506,12 @@
 		if (streaming) {
 			return;
 		}
-		const text = inputEl.value.trim();
-		if (!text) {
+		const value = inputEl.value.trim();
+		if (!value) {
 			return;
 		}
 		clearError();
-		vscode.postMessage({ type: 'send', text: text });
+		vscode.postMessage({ type: 'send', text: value });
 		inputEl.value = '';
 	}
 

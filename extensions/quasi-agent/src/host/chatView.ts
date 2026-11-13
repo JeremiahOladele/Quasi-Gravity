@@ -5,6 +5,7 @@
 
 import * as vscode from 'vscode';
 import { DEFAULT_MAX_ITERATIONS, runAgentLoop } from '../core/agentLoop';
+import { MarkdownBlock, isAllowedLink, parseMarkdown } from '../core/markdown';
 import { dropEmptyAssistant } from '../core/messages';
 import { ActiveProviderInfo, ChatMessage, ProvidersApiV1 } from '../core/providerApi';
 import { buildSystemPrompt } from '../core/prompt';
@@ -16,7 +17,7 @@ import { detectShell, osName, resolveWorkspaceContext, today } from './workspace
 
 type DisplayEntry =
 	| { kind: 'user'; text: string }
-	| { kind: 'assistant'; text: string }
+	| { kind: 'assistant'; text: string; id: string; blocks: MarkdownBlock[] }
 	| { kind: 'notice'; text: string }
 	| { kind: 'tool'; name: string; args: string; summary: string; isError: boolean };
 
@@ -45,6 +46,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 	private pendingSwitchCheck = false;
 	private currentAssistant: AssistantEntry | undefined;
 	private lastToolEntry: ToolEntry | undefined;
+	private markdownTimer: ReturnType<typeof setTimeout> | undefined;
+	private pendingMarkdownEntry: AssistantEntry | undefined;
+	private messageCounter = 0;
 	private readonly refusedModels = new Set<string>();
 	private readonly shownNotices = new Set<string>();
 	private readonly approvals: WebviewApprovalBroker;
@@ -71,6 +75,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 	newChat(): void {
 		this.generation++;
 		this.stopInternal();
+		this.clearMarkdownTimer();
 		this.entries = [];
 		this.providerHistory = [];
 		this.currentAssistant = undefined;
@@ -81,10 +86,19 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 	}
 
 	private handleViewDisposed(): void {
+		this.clearMarkdownTimer();
 		this.abort?.abort();
 		this.abort = undefined;
 		this.approvals.cancelAll();
 		this.clearViewDisposables();
+	}
+
+	private clearMarkdownTimer(): void {
+		if (this.markdownTimer !== undefined) {
+			clearTimeout(this.markdownTimer);
+			this.markdownTimer = undefined;
+		}
+		this.pendingMarkdownEntry = undefined;
 	}
 
 	private clearViewDisposables(): void {
@@ -128,6 +142,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 				break;
 			case 'approvalResponse':
 				this.approvals.resolve(message.id, message.approved);
+				break;
+			case 'copy':
+				this.copyCodeBlock(message.messageId, message.blockIndex);
+				break;
+			case 'openLink':
+				if (isAllowedLink(message.url)) {
+					void vscode.env.openExternal(vscode.Uri.parse(message.url));
+				}
 				break;
 			case 'addProvider':
 				void vscode.commands.executeCommand('quasi.provider.quickAdd');
@@ -264,6 +286,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		} finally {
 			if (generation === this.generation) {
 				this.abort = undefined;
+				this.flushMarkdown(this.currentAssistant);
 				this.setStreaming(false);
 				if (this.currentAssistant && dropEmptyAssistant(this.entries, this.currentAssistant)) {
 					this.postHistory();
@@ -283,14 +306,58 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
 	private onText(delta: string): void {
 		if (!this.currentAssistant) {
-			this.currentAssistant = { kind: 'assistant', text: '' };
+			this.currentAssistant = { kind: 'assistant', text: '', id: `m-${++this.messageCounter}`, blocks: [] };
 			this.entries.push(this.currentAssistant);
 		}
 		this.currentAssistant.text += delta;
-		this.post({ type: 'assistantDelta', text: delta });
+		this.scheduleMarkdown(this.currentAssistant);
+	}
+
+	private scheduleMarkdown(entry: AssistantEntry): void {
+		this.pendingMarkdownEntry = entry;
+		if (this.markdownTimer !== undefined) {
+			return;
+		}
+		this.markdownTimer = setTimeout(() => {
+			this.markdownTimer = undefined;
+			const pending = this.pendingMarkdownEntry;
+			this.pendingMarkdownEntry = undefined;
+			if (pending) {
+				this.postMarkdown(pending);
+			}
+		}, 50);
+	}
+
+	private postMarkdown(entry: AssistantEntry): void {
+		const blocks = parseMarkdown(entry.text).blocks;
+		entry.blocks = blocks;
+		this.post({ type: 'assistantMarkdown', messageId: entry.id, blocks });
+	}
+
+	private flushMarkdown(entry: AssistantEntry | undefined): void {
+		if (this.markdownTimer !== undefined) {
+			clearTimeout(this.markdownTimer);
+			this.markdownTimer = undefined;
+		}
+		this.pendingMarkdownEntry = undefined;
+		if (entry) {
+			this.postMarkdown(entry);
+		}
+	}
+
+	private copyCodeBlock(messageId: string, blockIndex: number): void {
+		const entry = this.entries.find(item => item.kind === 'assistant' && item.id === messageId);
+		if (!entry || entry.kind !== 'assistant') {
+			return;
+		}
+		const block = entry.blocks[blockIndex];
+		if (block && block.type === 'code') {
+			void vscode.env.clipboard.writeText(block.text);
+		}
 	}
 
 	private onToolCall(name: string, argsText: string): void {
+		this.flushMarkdown(this.currentAssistant);
 		this.currentAssistant = undefined;
 		const entry: ToolEntry = { kind: 'tool', name, args: prettyJson(argsText), summary: '', isError: false };
 		this.entries.push(entry);
@@ -365,7 +432,18 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 	}
 
 	private postHistory(): void {
-		this.post({ type: 'history', entries: this.entries.map(entry => ({ ...entry })) });
+		this.post({
+			type: 'history',
+			entries: this.entries.map(entry => {
+				if (entry.kind === 'assistant') {
+					if (entry.blocks.length === 0 && entry.text.length > 0) {
+						entry.blocks = parseMarkdown(entry.text).blocks;
+					}
+					return { kind: 'assistant', text: entry.text, id: entry.id, blocks: entry.blocks };
+				}
+				return { ...entry };
+			})
+		});
 	}
 
 	private postState(): void {
