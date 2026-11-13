@@ -33,3 +33,34 @@ export async function isRealPathOutside(root: string, candidate: string, caseIns
 	}
 	return !isPathInside(realRoot, realCandidate, caseInsensitive);
 }
+
+/**
+ * Real path for a write target that may not exist yet: resolves the nearest
+ * existing ancestor and re-appends the missing segments.
+ */
+export async function realPathForWrite(target: string): Promise<string | undefined> {
+	let current = target;
+	const missing: string[] = [];
+	while (true) {
+		const real = await realPathOrUndefined(current);
+		if (real) {
+			return missing.length > 0 ? path.join(real, ...missing) : real;
+		}
+		const parent = path.dirname(current);
+		if (parent === current) {
+			return undefined;
+		}
+		missing.unshift(path.basename(current));
+		current = parent;
+	}
+}
+
+/** True when the write target (existing or not) resolves outside the root. */
+export async function isWriteTargetOutside(root: string, candidate: string, caseInsensitive: boolean): Promise<boolean> {
+	const realRoot = await realPathOrUndefined(root);
+	const realCandidate = await realPathForWrite(candidate);
+	if (!realRoot || !realCandidate) {
+		return false;
+	}
+	return !isPathInside(realRoot, realCandidate, caseInsensitive);
+}

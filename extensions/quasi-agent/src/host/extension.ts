@@ -9,6 +9,7 @@ import { ChatViewProvider } from './chatView';
 export function activate(context: vscode.ExtensionContext): void {
 	const provider = new ChatViewProvider(context.extensionUri);
 	context.subscriptions.push(
+		provider,
 		vscode.window.registerWebviewViewProvider('quasi.chat.view', provider, {
 			webviewOptions: { retainContextWhenHidden: false }
 		}),

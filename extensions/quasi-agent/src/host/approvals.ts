@@ -15,7 +15,7 @@ export class WebviewApprovalBroker implements ApprovalBroker {
 
 	requestApproval(prompt: ApprovalPrompt, signal: AbortSignal): Promise<boolean> {
 		const { id, promise } = this.gate.create(prompt, signal);
-		this.post({ type: 'approvalRequest', id, toolName: prompt.toolName, reason: prompt.reason, detail: prompt.detail });
+		this.post({ type: 'approvalRequest', id, toolName: prompt.toolName, reason: prompt.reason, detail: prompt.detail, ...(prompt.diff !== undefined ? { diff: prompt.diff } : {}) });
 		return promise.then(approved => {
 			this.post({ type: 'approvalResolved', id, approved });
 			return approved;

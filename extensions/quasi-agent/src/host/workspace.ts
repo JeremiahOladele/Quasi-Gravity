@@ -45,7 +45,7 @@ export function resolveWorkspaceContext(): WorkspaceContext {
 		rootName: root.name,
 		rootPath: root.uri.fsPath,
 		multiRoot,
-		capabilities: new Set<Capability>(['fs.read'])
+		capabilities: new Set<Capability>(['fs.read', 'fs.write'])
 	};
 }
 

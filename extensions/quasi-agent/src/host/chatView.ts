@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import * as path from 'path';
 import * as vscode from 'vscode';
 import { DEFAULT_MAX_ITERATIONS, runAgentLoop } from '../core/agentLoop';
 import { MarkdownBlock, isAllowedLink, parseMarkdown } from '../core/markdown';
@@ -10,7 +11,13 @@ import { dropEmptyAssistant } from '../core/messages';
 import { ActiveProviderInfo, ChatMessage, ProvidersApiV1 } from '../core/providerApi';
 import { buildSystemPrompt } from '../core/prompt';
 import { parseWebviewToHost } from '../core/protocol';
+import { BulkChangeGuard } from '../core/tools/bulkGuard';
+import { ToolDef } from '../core/tools/registry';
+import { UndoBook, planRevert } from '../core/tools/undo';
 import { WebviewApprovalBroker } from './approvals';
+import { DiffContentProvider } from './diffProvider';
+import { AppliedChange, createEditTools } from './editTools';
+import { FileWriter, readCurrentText } from './fileWriter';
 import { getProvidersApi } from './providerApi';
 import { createReadTools } from './toolsFs';
 import { detectShell, osName, resolveWorkspaceContext, today } from './workspace';
@@ -29,7 +36,7 @@ interface ProviderIdentity {
 	readonly host?: string;
 }
 
-export class ChatViewProvider implements vscode.WebviewViewProvider {
+export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
 
 	private view: vscode.WebviewView | undefined;
 	private viewDisposables: vscode.Disposable[] = [];
@@ -52,6 +59,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 	private readonly refusedModels = new Set<string>();
 	private readonly shownNotices = new Set<string>();
 	private readonly approvals: WebviewApprovalBroker;
+	private readonly undo = new UndoBook();
+	private readonly guard = new BulkChangeGuard();
+	private readonly diffProvider = new DiffContentProvider();
+	private readonly writer = new FileWriter();
+	private firstWriteNoticed = false;
+	private lastRootPath: string | undefined;
 
 	constructor(private readonly extensionUri: vscode.Uri) {
 		this.approvals = new WebviewApprovalBroker(message => this.post(message));
@@ -81,7 +94,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		this.currentAssistant = undefined;
 		this.lastToolEntry = undefined;
 		this.lastIdentity = undefined;
+		this.undo.clear();
+		this.guard.reset();
+		this.diffProvider.clear();
 		this.post({ type: 'cleared' });
+		this.post({ type: 'undoState', canRevertAll: false });
 		this.postState();
 	}
 
@@ -151,6 +168,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 					void vscode.env.openExternal(vscode.Uri.parse(message.url));
 				}
 				break;
+			case 'openDiff':
+				void this.openDiff(message.id);
+				break;
+			case 'revertChange':
+				void this.revertChange(message.id);
+				break;
+			case 'revertAll':
+				void this.revertAll();
+				break;
 			case 'addProvider':
 				void vscode.commands.executeCommand('quasi.provider.quickAdd');
 				break;
@@ -170,6 +196,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		}
 		this.postHistory();
 		this.postState();
+		this.post({ type: 'undoState', canRevertAll: !this.undo.empty });
 		this.notifyWorkspaceChanged();
 	}
 
@@ -181,6 +208,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		} else if (workspace.multiRoot) {
 			this.maybeNotice(`More than one folder is open. Tools only see '${workspace.rootName ?? 'the first folder'}'.`);
 		}
+		if (this.lastRootPath !== workspace.rootPath) {
+			this.lastRootPath = workspace.rootPath;
+			this.undo.clear();
+			this.guard.reset();
+			this.diffProvider.clear();
+			this.post({ type: 'undoState', canRevertAll: false });
+		}
 		this.postState();
 	}
 
@@ -189,6 +223,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			return;
 		}
 		await this.ensureApi();
+		this.guard.reset();
 		const active = this.api?.getActive();
 		if (!active) {
 			this.post({ type: 'assistantError', kind: 'no-model', message: 'No active model. Add a provider or pick a model.' });
@@ -197,7 +232,18 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		this.noteProviderSwitch(active);
 
 		const workspace = resolveWorkspaceContext();
-		const rootTools = workspace.rootUri && workspace.capabilities.has('fs.read') ? createReadTools(workspace.rootUri) : [];
+		const rootTools: ToolDef[] = workspace.rootUri ? [
+			...(workspace.capabilities.has('fs.read') ? createReadTools(workspace.rootUri) : []),
+			...(workspace.capabilities.has('fs.write') ? createEditTools({
+				rootUri: workspace.rootUri,
+				undo: this.undo,
+				guard: this.guard,
+				writer: this.writer,
+				broker: this.approvals,
+				getDefaults: () => this.api?.getSafetyDefaults(),
+				onApplied: change => this.onChange(change)
+			}) : [])
+		] : [];
 		const refused = this.refusedModels.has(`${active.providerId}:${active.model}`);
 		const toolSupport = refused ? 'unsupported' as const : active.capabilityStates.tools;
 		const tools = toolSupport === 'unsupported' ? [] : rootTools;
@@ -396,6 +442,107 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		this.onNotice(text);
 	}
 
+	private onChange(change: AppliedChange): void {
+		this.diffProvider.remember(change.id, change.before, change.after, change.summary);
+		this.post({
+			type: 'change',
+			id: change.id,
+			path: change.path,
+			summary: change.summary,
+			diff: change.diff,
+			diffTruncated: change.diffTruncated,
+			canRevert: change.canRevert
+		});
+		this.post({ type: 'undoState', canRevertAll: !this.undo.empty });
+		if (!this.firstWriteNoticed) {
+			this.firstWriteNoticed = true;
+			this.onNotice('The agent edited a file. Changes are kept in memory for this session; use Revert on a change card to undo.');
+		}
+	}
+
+	private async openDiff(id: string): Promise<void> {
+		if (!await this.diffProvider.show(id)) {
+			this.post({ type: 'notice', text: 'This diff is no longer available (it may have expired).' });
+		}
+	}
+
+	private async revertChange(id: string): Promise<void> {
+		const record = this.undo.find(id);
+		if (!record) {
+			this.post({ type: 'notice', text: 'This change can no longer be reverted.' });
+			return;
+		}
+		const decision = planRevert(record, await readCurrentText(record.path));
+		if (decision.action === 'noop') {
+			this.undo.remove(id);
+			this.post({ type: 'changeReverted', id });
+			this.post({ type: 'undoState', canRevertAll: !this.undo.empty });
+			return;
+		}
+		if (decision.conflict) {
+			const choice = await vscode.window.showWarningMessage(
+				`${displayPath(record.path)} has changed since the agent edited it. Revert anyway?`,
+				{ modal: true },
+				'Revert'
+			);
+			if (choice !== 'Revert') {
+				return;
+			}
+		}
+		const applied = record.kind === 'created'
+			? await this.writer.remove(record.path)
+			: await this.writer.writeWhole(record.path, decision.content ?? '');
+		if (!applied) {
+			this.post({ type: 'notice', text: 'Could not revert the change.' });
+			return;
+		}
+		this.undo.remove(id);
+		this.diffProvider.forget(id);
+		this.post({ type: 'changeReverted', id });
+		this.post({ type: 'undoState', canRevertAll: !this.undo.empty });
+	}
+
+	private async revertAll(): Promise<void> {
+		const records = this.undo.all().slice().reverse();
+		if (records.length === 0) {
+			return;
+		}
+		let conflict = false;
+		for (const record of records) {
+			if (planRevert(record, await readCurrentText(record.path)).conflict) {
+				conflict = true;
+				break;
+			}
+		}
+		const message = conflict
+			? `Some files changed after the agent edited them. Revert all ${records.length} change(s) anyway?`
+			: `Revert ${records.length} agent change(s)?`;
+		const choice = await vscode.window.showWarningMessage(message, { modal: true }, 'Revert all');
+		if (choice !== 'Revert all') {
+			return;
+		}
+		for (const record of records) {
+			const decision = planRevert(record, await readCurrentText(record.path));
+			if (decision.action !== 'noop') {
+				if (record.kind === 'created') {
+					await this.writer.remove(record.path);
+				} else {
+					await this.writer.writeWhole(record.path, decision.content ?? '');
+				}
+			}
+			this.undo.remove(record.id);
+			this.diffProvider.forget(record.id);
+		}
+		this.post({ type: 'changesReverted' });
+		this.post({ type: 'undoState', canRevertAll: false });
+	}
+
+	dispose(): void {
+		this.stopInternal();
+		this.clearMarkdownTimer();
+		this.diffProvider.dispose();
+	}
+
 	private stopInternal(): void {
 		this.abort?.abort();
 		this.abort = undefined;
@@ -484,6 +631,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 <body>
 <header id="header">
 	<span id="active">No model</span>
+	<button id="revertAll" type="button" hidden>Revert all</button>
 	<button id="newChat" type="button">New Chat</button>
 </header>
 <div id="messages" role="log" aria-live="polite"></div>
@@ -502,6 +650,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 </body>
 </html>`;
 	}
+}
+
+function displayPath(absolute: string): string {
+	const root = resolveWorkspaceContext().rootPath;
+	if (!root) {
+		return absolute;
+	}
+	const relative = path.relative(root, absolute);
+	return relative.startsWith('..') || path.isAbsolute(relative) ? absolute : relative.split(path.sep).join('/');
 }
 
 function providerIdentity(active: ActiveProviderInfo): ProviderIdentity {

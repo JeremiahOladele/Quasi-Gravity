@@ -47,7 +47,7 @@ export type HostToWebview =
 	| { readonly type: 'cleared' }
 	| { readonly type: 'busy'; readonly value: boolean };
 
-export type ApprovalReason = 'sensitive-file' | 'outside-workspace' | 'protected-path' | 'delete' | 'bulk-change';
+export type ApprovalReason = 'sensitive-file' | 'outside-workspace' | 'protected-path' | 'delete' | 'bulk-change' | 'destructive-write';
 
 function isObject(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -204,7 +204,7 @@ export function parseHostToWebview(raw: unknown): HostToWebview | undefined {
 			}
 			return undefined;
 		case 'approvalRequest': {
-			const reasons: ReadonlyArray<ApprovalReason> = ['sensitive-file', 'outside-workspace', 'protected-path', 'delete', 'bulk-change'];
+			const reasons: ReadonlyArray<ApprovalReason> = ['sensitive-file', 'outside-workspace', 'protected-path', 'delete', 'bulk-change', 'destructive-write'];
 			if (typeof raw.id === 'string' && raw.id.length > 0 && raw.id.length <= 200
 				&& isBoundedString(raw.toolName)
 				&& typeof raw.reason === 'string' && (reasons as ReadonlyArray<string>).includes(raw.reason)

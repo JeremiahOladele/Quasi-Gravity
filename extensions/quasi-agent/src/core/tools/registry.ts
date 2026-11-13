@@ -26,10 +26,14 @@ export interface ToolResult {
 	readonly isError?: boolean;
 }
 
+export type ApprovalReasonCode = 'sensitive-file' | 'outside-workspace' | 'protected-path' | 'delete' | 'bulk-change' | 'destructive-write';
+
 export interface ApprovalPrompt {
 	readonly toolName: string;
-	readonly reason: 'sensitive-file' | 'outside-workspace';
+	readonly reason: ApprovalReasonCode;
 	readonly detail: string;
+	/** Capped, preformatted diff shown with the approval. */
+	readonly diff?: string;
 }
 
 export interface ToolDef {
