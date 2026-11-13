@@ -199,3 +199,18 @@ Report your plan first and wait for approval.
 - Core patches are minimal and tagged `// QUASI:`
 - Cross-platform rules above are respected
 - Committed with a clear message
+
+## Deferred cleanup
+
+These follow-ups were deliberately left out of the initial strip-accounts pass
+and should be done in later sessions:
+
+- Remove `defaultChatAgent` and `trustedExtensionAuthAccess` from `product.json`.
+  This needs ~6 null-guard patches first (the consumers dereference it without
+  `?.`), most importantly `src/vs/workbench/services/accounts/browser/defaultAccount.ts`
+  (`toDefaultAccountConfig` is called with `undefined` and is a startup singleton).
+  Do this once the `quasi-*` provider layer replaces the built-in chat.
+- Exclude the `microsoft-authentication` extension from the build and fix the
+  Darwin build scripts (`build/darwin/verify-macho.ts`, `build/darwin/create-universal-app.ts`)
+  that reference its native binaries. Do this when CI is set up (the maintainer
+  can only build Linux locally).
