@@ -9,7 +9,6 @@ import {
 	ImportPlan,
 	QuasiSettingsV1,
 	SETTINGS_VERSION,
-	filterKnownDefaults,
 	parseQuasiSettings,
 	planImport,
 	scanForSecrets,
@@ -21,11 +20,9 @@ import type { CommandServices } from './commands';
 import {
 	readActiveModel,
 	readActiveProviderId,
-	readDefaults,
 	readProviders,
 	writeActiveModel,
 	writeActiveProviderId,
-	writeDefaults,
 	writeProviders
 } from './settings';
 
@@ -94,7 +91,6 @@ async function exportSettings(gateway: SettingsFileGateway): Promise<void> {
 	const settings: QuasiSettingsV1 = {
 		version: SETTINGS_VERSION,
 		providers,
-		defaults: readDefaults(),
 		...(activeProviderId !== undefined ? { activeProviderId } : {}),
 		...(activeModel !== undefined ? { activeModel } : {}),
 	};
@@ -146,12 +142,8 @@ async function importSettings(gateway: SettingsFileGateway, services: CommandSer
 		await writeActiveModel(plan.activeModel);
 	}
 
-	// Only keys this build knows are applied (none until M5); everything else was dropped.
-	const knownDefaults = filterKnownDefaults(parsed.value.defaults).value;
-	if (Object.keys(knownDefaults).length > 0) {
-		await writeDefaults({ ...readDefaults(), ...knownDefaults });
-	}
-
+	// Safety defaults are device-local and never imported; any `defaults` keys in
+	// the file were dropped and are reported in the summary above.
 	await warnMissingKeys(services, plan.providers);
 	void vscode.window.showInformationMessage(`Quasi: imported settings. Added ${plan.added.length}, updated ${plan.updated.length}, skipped ${plan.skipped.length}.`);
 }

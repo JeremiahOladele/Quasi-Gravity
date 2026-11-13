@@ -5,6 +5,7 @@
 
 import * as vscode from 'vscode';
 import { ProvidersReadResult, readProvidersSafe } from '../core/providerConfig';
+import { SafetyDefaults, normalizeSafetyDefaults } from '../core/safetyDefaults';
 import { ProviderConfig } from '../core/types';
 
 const SECTION = 'quasi';
@@ -52,11 +53,10 @@ export async function writeDiscoveryDontAskAgain(value: boolean): Promise<void> 
 	await configuration().update('discovery.dontAskAgain', value, vscode.ConfigurationTarget.Global);
 }
 
-export function readDefaults(): Record<string, unknown> {
-	const value = configuration().get<Record<string, unknown>>('defaults');
-	return typeof value === 'object' && value !== null && !Array.isArray(value) ? value : {};
+export function readDefaults(): SafetyDefaults {
+	return normalizeSafetyDefaults(configuration().get<unknown>('defaults'));
 }
 
-export async function writeDefaults(value: Record<string, unknown>): Promise<void> {
+export async function writeDefaults(value: SafetyDefaults): Promise<void> {
 	await configuration().update('defaults', value, vscode.ConfigurationTarget.Global);
 }
