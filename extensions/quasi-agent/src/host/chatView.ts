@@ -5,7 +5,7 @@
 
 import * as vscode from 'vscode';
 import { classifyChatError } from '../core/errors';
-import { toProviderMessages } from '../core/messages';
+import { dropEmptyAssistant, toProviderMessages } from '../core/messages';
 import { ActiveProviderInfo, ProvidersApiV1 } from '../core/providerApi';
 import { parseWebviewToHost } from '../core/protocol';
 import { getProvidersApi } from './providerApi';
@@ -176,6 +176,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			if (generation === this.generation) {
 				this.abort = undefined;
 				this.setStreaming(false);
+				// Error or Stop before any text: drop the empty assistant bubble.
+				if (dropEmptyAssistant(this.entries, assistant)) {
+					this.postHistory();
+				}
 				if (this.pendingSwitchCheck) {
 					this.pendingSwitchCheck = false;
 					const current = this.api?.getActive();

@@ -29,3 +29,19 @@ export function toProviderMessages(entries: ReadonlyArray<ConversationEntry>, sy
 	}
 	return messages;
 }
+
+/**
+ * Remove an assistant entry that never received any text (an error or Stop
+ * before output). Returns true when it was removed. Partial text is kept.
+ */
+export function dropEmptyAssistant<T extends { readonly kind: string; readonly text: string }>(entries: T[], entry: T): boolean {
+	if (entry.kind !== 'assistant' || entry.text.length > 0) {
+		return false;
+	}
+	const index = entries.indexOf(entry);
+	if (index === -1) {
+		return false;
+	}
+	entries.splice(index, 1);
+	return true;
+}
