@@ -131,7 +131,7 @@ These apply to the product we are building, and to how you behave while building
 
 0. Strip built-in account functionality (DONE)
 1. Provider layer: BYO API keys, local waypoints, first-run defaults, exportable
-   settings (CURRENT, see `docs/PHASE1.md`)
+   settings (CURRENT — M5 done, see `docs/PHASE1.md`)
 2. Agent loop and chat panel (built-in extension, web-compatible design)
 3. Checkpoints (hidden git snapshots, stored on a private ref)
 4. Artifacts (plans, task lists, screenshots, with inline comments)
