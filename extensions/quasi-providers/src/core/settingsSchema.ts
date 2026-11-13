@@ -246,12 +246,15 @@ export function planImport(
 	}
 
 	let activeProviderId = currentActiveId;
-	if (importedActiveId && providers.some(provider => provider.id === importedActiveId)) {
-		activeProviderId = importedActiveId;
-	}
 	let activeModel = currentActiveModel;
-	if (importedActiveModel && importedActiveId && activeProviderId === importedActiveId) {
-		activeModel = importedActiveModel;
+	if (importedActiveId && providers.some(provider => provider.id === importedActiveId)) {
+		if (importedActiveId !== currentActiveId) {
+			activeProviderId = importedActiveId;
+			// The old model belonged to the previous provider; do not carry it over.
+			activeModel = importedActiveModel;
+		} else if (importedActiveModel !== undefined) {
+			activeModel = importedActiveModel;
+		}
 	}
 
 	return {

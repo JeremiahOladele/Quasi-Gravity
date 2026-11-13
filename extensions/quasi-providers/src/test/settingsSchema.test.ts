@@ -142,4 +142,11 @@ describe('planImport', () => {
 		assert.strictEqual(missing.activeProviderId, 'p');
 		assert.strictEqual(missing.activeModel, 'old');
 	});
+
+	it('clears the model when the imported active provider changes without a model', () => {
+		const two = [provider('p', 'https://a.example.com/v1'), provider('q', 'https://b.example.com/v1')];
+		const plan = planImport(two, [], 'p', 'old', 'q', undefined);
+		assert.strictEqual(plan.activeProviderId, 'q');
+		assert.strictEqual(plan.activeModel, undefined);
+	});
 });
