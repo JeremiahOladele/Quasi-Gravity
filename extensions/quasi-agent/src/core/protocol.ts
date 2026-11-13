@@ -16,7 +16,8 @@ export type WebviewToHost =
 	| { readonly type: 'stop' }
 	| { readonly type: 'newChat' }
 	| { readonly type: 'addProvider' }
-	| { readonly type: 'setApiKey' };
+	| { readonly type: 'setApiKey' }
+	| { readonly type: 'approvalResponse'; readonly id: string; readonly approved: boolean };
 
 /** Frames the host may send to the webview. Never carries raw errors or secrets. */
 export type HostToWebview =
@@ -25,8 +26,15 @@ export type HostToWebview =
 	| { readonly type: 'assistantDelta'; readonly text: string }
 	| { readonly type: 'assistantDone'; readonly usage?: { readonly inputTokens?: number; readonly outputTokens?: number } }
 	| { readonly type: 'assistantError'; readonly kind: HostErrorKind; readonly message: string }
+	| { readonly type: 'toolCall'; readonly name: string; readonly arguments: string }
+	| { readonly type: 'toolResult'; readonly name: string; readonly summary: string; readonly isError: boolean }
+	| { readonly type: 'approvalRequest'; readonly id: string; readonly toolName: string; readonly reason: ApprovalReason; readonly detail: string }
+	| { readonly type: 'approvalResolved'; readonly id: string; readonly approved: boolean }
+	| { readonly type: 'notice'; readonly text: string }
 	| { readonly type: 'cleared' }
 	| { readonly type: 'busy'; readonly value: boolean };
+
+export type ApprovalReason = 'sensitive-file' | 'outside-workspace';
 
 function isObject(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -52,13 +60,27 @@ export function parseWebviewToHost(raw: unknown): WebviewToHost | undefined {
 				return undefined;
 			}
 			return { type: 'send', text: raw.text };
+		case 'approvalResponse':
+			if (typeof raw.id === 'string' && raw.id.length > 0 && raw.id.length <= 200 && typeof raw.approved === 'boolean') {
+				return { type: 'approvalResponse', id: raw.id, approved: raw.approved };
+			}
+			return undefined;
 		default:
 			return undefined;
 	}
 }
 
 function parseEntry(raw: unknown): ConversationEntry | undefined {
-	if (!isObject(raw) || !isBoundedString(raw.text)) {
+	if (!isObject(raw)) {
+		return undefined;
+	}
+	if (raw.kind === 'tool') {
+		if (isBoundedString(raw.name) && isBoundedString(raw.args) && isBoundedString(raw.summary) && typeof raw.isError === 'boolean') {
+			return { kind: 'tool', name: raw.name, args: raw.args, summary: raw.summary, isError: raw.isError };
+		}
+		return undefined;
+	}
+	if (!isBoundedString(raw.text)) {
 		return undefined;
 	}
 	if (raw.kind === 'user' || raw.kind === 'assistant' || raw.kind === 'notice') {
@@ -123,6 +145,33 @@ export function parseHostToWebview(raw: unknown): HostToWebview | undefined {
 			}
 			return undefined;
 		}
+		case 'toolCall':
+			if (typeof raw.name === 'string' && raw.name.length > 0 && isBoundedString(raw.name) && isBoundedString(raw.arguments)) {
+				return { type: 'toolCall', name: raw.name, arguments: raw.arguments };
+			}
+			return undefined;
+		case 'toolResult':
+			if (isBoundedString(raw.name) && isBoundedString(raw.summary) && typeof raw.isError === 'boolean') {
+				return { type: 'toolResult', name: raw.name, summary: raw.summary, isError: raw.isError };
+			}
+			return undefined;
+		case 'approvalRequest': {
+			const reasons: ReadonlyArray<ApprovalReason> = ['sensitive-file', 'outside-workspace'];
+			if (typeof raw.id === 'string' && raw.id.length > 0 && raw.id.length <= 200
+				&& isBoundedString(raw.toolName)
+				&& typeof raw.reason === 'string' && (reasons as ReadonlyArray<string>).includes(raw.reason)
+				&& isBoundedString(raw.detail)) {
+				return { type: 'approvalRequest', id: raw.id, toolName: raw.toolName, reason: raw.reason as ApprovalReason, detail: raw.detail };
+			}
+			return undefined;
+		}
+		case 'approvalResolved':
+			if (typeof raw.id === 'string' && raw.id.length > 0 && raw.id.length <= 200 && typeof raw.approved === 'boolean') {
+				return { type: 'approvalResolved', id: raw.id, approved: raw.approved };
+			}
+			return undefined;
+		case 'notice':
+			return isBoundedString(raw.text) ? { type: 'notice', text: raw.text } : undefined;
 		case 'cleared':
 			return { type: 'cleared' };
 		case 'busy':

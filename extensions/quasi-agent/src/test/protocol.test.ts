@@ -65,3 +65,36 @@ describe('parseHostToWebview', () => {
 		assert.strictEqual(parseHostToWebview({ type: 'unknown' }), undefined);
 	});
 });
+
+describe('M2 protocol frames', () => {
+	it('parses approval responses', () => {
+		assert.deepStrictEqual(parseWebviewToHost({ type: 'approvalResponse', id: 'abc', approved: true }), { type: 'approvalResponse', id: 'abc', approved: true });
+		assert.strictEqual(parseWebviewToHost({ type: 'approvalResponse', id: '', approved: true }), undefined);
+		assert.strictEqual(parseWebviewToHost({ type: 'approvalResponse', id: 'x', approved: 'yes' }), undefined);
+	});
+
+	it('parses tool call and result frames', () => {
+		assert.deepStrictEqual(parseHostToWebview({ type: 'toolCall', name: 'read_file', arguments: '{}' }), { type: 'toolCall', name: 'read_file', arguments: '{}' });
+		assert.deepStrictEqual(parseHostToWebview({ type: 'toolResult', name: 'read_file', summary: 'ok', isError: false }), { type: 'toolResult', name: 'read_file', summary: 'ok', isError: false });
+		assert.strictEqual(parseHostToWebview({ type: 'toolCall', name: '', arguments: '{}' }), undefined);
+		assert.strictEqual(parseHostToWebview({ type: 'toolResult', name: 'x', summary: 'y' }), undefined);
+	});
+
+	it('parses approval frames and notices', () => {
+		assert.deepStrictEqual(
+			parseHostToWebview({ type: 'approvalRequest', id: 'a1', toolName: 'read_file', reason: 'sensitive-file', detail: '.env' }),
+			{ type: 'approvalRequest', id: 'a1', toolName: 'read_file', reason: 'sensitive-file', detail: '.env' }
+		);
+		assert.strictEqual(parseHostToWebview({ type: 'approvalRequest', id: 'a1', toolName: 't', reason: 'weird', detail: 'd' }), undefined);
+		assert.deepStrictEqual(parseHostToWebview({ type: 'approvalResolved', id: 'a1', approved: false }), { type: 'approvalResolved', id: 'a1', approved: false });
+		assert.deepStrictEqual(parseHostToWebview({ type: 'notice', text: 'hello' }), { type: 'notice', text: 'hello' });
+	});
+
+	it('parses tool entries in history', () => {
+		assert.deepStrictEqual(
+			parseHostToWebview({ type: 'history', entries: [{ kind: 'tool', name: 'read_file', args: '{}', summary: 'ok', isError: false }] }),
+			{ type: 'history', entries: [{ kind: 'tool', name: 'read_file', args: '{}', summary: 'ok', isError: false }] }
+		);
+		assert.strictEqual(parseHostToWebview({ type: 'history', entries: [{ kind: 'tool', name: 'x' }] }), undefined);
+	});
+});
