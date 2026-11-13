@@ -131,3 +131,35 @@ describe('markdown and link protocol frames', () => {
 		assert.strictEqual(parseHostToWebview({ type: 'history', entries: [{ kind: 'assistant', text: 'x', blocks: [{ type: 'bad' }] }] }), undefined);
 	});
 });
+
+describe('editing and undo protocol frames', () => {
+	it('accepts webview editing requests with bounded ids', () => {
+		assert.deepStrictEqual(parseWebviewToHost({ type: 'openDiff', id: 'c1' }), { type: 'openDiff', id: 'c1' });
+		assert.deepStrictEqual(parseWebviewToHost({ type: 'revertChange', id: 'c1' }), { type: 'revertChange', id: 'c1' });
+		assert.deepStrictEqual(parseWebviewToHost({ type: 'revertAll' }), { type: 'revertAll' });
+		assert.strictEqual(parseWebviewToHost({ type: 'openDiff', id: '' }), undefined);
+		assert.strictEqual(parseWebviewToHost({ type: 'revertChange' }), undefined);
+	});
+
+	it('parses change and undo-state frames', () => {
+		const change = { type: 'change', id: 'c1', path: 'src/a.ts', summary: 'Edited src/a.ts', diff: ' a\n-b\n+c', diffTruncated: false, canRevert: true };
+		assert.deepStrictEqual(parseHostToWebview(change), change);
+		assert.strictEqual(parseHostToWebview({ ...change, diff: 'x'.repeat(20_001) }), undefined);
+		assert.strictEqual(parseHostToWebview({ ...change, canRevert: 'yes' }), undefined);
+		assert.deepStrictEqual(parseHostToWebview({ type: 'changeReverted', id: 'c1' }), { type: 'changeReverted', id: 'c1' });
+		assert.deepStrictEqual(parseHostToWebview({ type: 'changesReverted' }), { type: 'changesReverted' });
+		assert.deepStrictEqual(parseHostToWebview({ type: 'undoState', canRevertAll: true }), { type: 'undoState', canRevertAll: true });
+		assert.strictEqual(parseHostToWebview({ type: 'undoState', canRevertAll: 1 }), undefined);
+	});
+
+	it('accepts approval frames with new reasons and a capped diff', () => {
+		const frame = { type: 'approvalRequest', id: 'a1', toolName: 'write_file', reason: 'protected-path', detail: '.git/config', diff: '-a\n+b' };
+		assert.deepStrictEqual(parseHostToWebview(frame), frame);
+		assert.deepStrictEqual(
+			parseHostToWebview({ type: 'approvalRequest', id: 'a2', toolName: 'delete_file', reason: 'delete', detail: 'x' }),
+			{ type: 'approvalRequest', id: 'a2', toolName: 'delete_file', reason: 'delete', detail: 'x' }
+		);
+		assert.strictEqual(parseHostToWebview({ ...frame, diff: 'x'.repeat(20_001) }), undefined);
+		assert.strictEqual(parseHostToWebview({ ...frame, reason: 'weird' }), undefined);
+	});
+});

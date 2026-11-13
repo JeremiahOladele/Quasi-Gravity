@@ -9,6 +9,7 @@ import { ConversationEntry } from './messages';
 const MAX_TEXT_LENGTH = 100_000;
 const MAX_ID_LENGTH = 200;
 const MAX_BLOCK_INDEX = 100_000;
+const MAX_DIFF_LENGTH = 20_000;
 
 export type HostErrorKind = 'no-model' | 'key-rejected' | 'offline' | 'rate-limited' | 'provider-error';
 
@@ -22,7 +23,10 @@ export type WebviewToHost =
 	| { readonly type: 'setApiKey' }
 	| { readonly type: 'approvalResponse'; readonly id: string; readonly approved: boolean }
 	| { readonly type: 'copy'; readonly messageId: string; readonly blockIndex: number }
-	| { readonly type: 'openLink'; readonly url: string };
+	| { readonly type: 'openLink'; readonly url: string }
+	| { readonly type: 'openDiff'; readonly id: string }
+	| { readonly type: 'revertChange'; readonly id: string }
+	| { readonly type: 'revertAll' };
 
 /** Frames the host may send to the webview. Never carries raw errors or secrets. */
 export type HostToWebview =
@@ -33,13 +37,17 @@ export type HostToWebview =
 	| { readonly type: 'assistantError'; readonly kind: HostErrorKind; readonly message: string }
 	| { readonly type: 'toolCall'; readonly name: string; readonly arguments: string }
 	| { readonly type: 'toolResult'; readonly name: string; readonly summary: string; readonly isError: boolean }
-	| { readonly type: 'approvalRequest'; readonly id: string; readonly toolName: string; readonly reason: ApprovalReason; readonly detail: string }
+	| { readonly type: 'approvalRequest'; readonly id: string; readonly toolName: string; readonly reason: ApprovalReason; readonly detail: string; readonly diff?: string }
 	| { readonly type: 'approvalResolved'; readonly id: string; readonly approved: boolean }
+	| { readonly type: 'change'; readonly id: string; readonly path: string; readonly summary: string; readonly diff: string; readonly diffTruncated: boolean; readonly canRevert: boolean }
+	| { readonly type: 'changeReverted'; readonly id: string }
+	| { readonly type: 'changesReverted' }
+	| { readonly type: 'undoState'; readonly canRevertAll: boolean }
 	| { readonly type: 'notice'; readonly text: string }
 	| { readonly type: 'cleared' }
 	| { readonly type: 'busy'; readonly value: boolean };
 
-export type ApprovalReason = 'sensitive-file' | 'outside-workspace';
+export type ApprovalReason = 'sensitive-file' | 'outside-workspace' | 'protected-path' | 'delete' | 'bulk-change';
 
 function isObject(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -81,6 +89,14 @@ export function parseWebviewToHost(raw: unknown): WebviewToHost | undefined {
 				return { type: 'openLink', url: raw.url.trim() };
 			}
 			return undefined;
+		case 'openDiff':
+		case 'revertChange':
+			if (typeof raw.id === 'string' && raw.id.length > 0 && raw.id.length <= MAX_ID_LENGTH) {
+				return { type: raw.type, id: raw.id };
+			}
+			return undefined;
+		case 'revertAll':
+			return { type: 'revertAll' };
 		default:
 			return undefined;
 	}
@@ -188,15 +204,42 @@ export function parseHostToWebview(raw: unknown): HostToWebview | undefined {
 			}
 			return undefined;
 		case 'approvalRequest': {
-			const reasons: ReadonlyArray<ApprovalReason> = ['sensitive-file', 'outside-workspace'];
+			const reasons: ReadonlyArray<ApprovalReason> = ['sensitive-file', 'outside-workspace', 'protected-path', 'delete', 'bulk-change'];
 			if (typeof raw.id === 'string' && raw.id.length > 0 && raw.id.length <= 200
 				&& isBoundedString(raw.toolName)
 				&& typeof raw.reason === 'string' && (reasons as ReadonlyArray<string>).includes(raw.reason)
 				&& isBoundedString(raw.detail)) {
-				return { type: 'approvalRequest', id: raw.id, toolName: raw.toolName, reason: raw.reason as ApprovalReason, detail: raw.detail };
+				let diff: string | undefined;
+				if (raw.diff !== undefined) {
+					if (typeof raw.diff !== 'string' || raw.diff.length > MAX_DIFF_LENGTH) {
+						return undefined;
+					}
+					diff = raw.diff;
+				}
+				return { type: 'approvalRequest', id: raw.id, toolName: raw.toolName, reason: raw.reason as ApprovalReason, detail: raw.detail, ...(diff !== undefined ? { diff } : {}) };
 			}
 			return undefined;
 		}
+		case 'change': {
+			if (typeof raw.id === 'string' && raw.id.length > 0 && raw.id.length <= MAX_ID_LENGTH
+				&& isBoundedString(raw.path)
+				&& isBoundedString(raw.summary)
+				&& typeof raw.diff === 'string' && raw.diff.length <= MAX_DIFF_LENGTH
+				&& typeof raw.diffTruncated === 'boolean'
+				&& typeof raw.canRevert === 'boolean') {
+				return { type: 'change', id: raw.id, path: raw.path, summary: raw.summary, diff: raw.diff, diffTruncated: raw.diffTruncated, canRevert: raw.canRevert };
+			}
+			return undefined;
+		}
+		case 'changeReverted':
+			if (typeof raw.id === 'string' && raw.id.length > 0 && raw.id.length <= MAX_ID_LENGTH) {
+				return { type: 'changeReverted', id: raw.id };
+			}
+			return undefined;
+		case 'changesReverted':
+			return { type: 'changesReverted' };
+		case 'undoState':
+			return typeof raw.canRevertAll === 'boolean' ? { type: 'undoState', canRevertAll: raw.canRevertAll } : undefined;
 		case 'approvalResolved':
 			if (typeof raw.id === 'string' && raw.id.length > 0 && raw.id.length <= 200 && typeof raw.approved === 'boolean') {
 				return { type: 'approvalResolved', id: raw.id, approved: raw.approved };
