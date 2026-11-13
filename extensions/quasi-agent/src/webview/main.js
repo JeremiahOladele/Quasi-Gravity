@@ -20,6 +20,83 @@
 	let approvalCards = new Map();
 	let assistantContainers = new Map();
 
+	const MD_MAX_DEPTH = 8;
+	const MD_MAX_NODES = 20000;
+	const MD_MAX_BLOCKS = 5000;
+
+	function isInlineList(list, depth, counter) {
+		return Array.isArray(list) && list.every(function (node) {
+			return isInlineNode(node, depth, counter);
+		});
+	}
+
+	function isInlineNode(node, depth, counter) {
+		if (!node || typeof node !== 'object' || depth > MD_MAX_DEPTH || counter.nodes++ >= MD_MAX_NODES) {
+			return false;
+		}
+		switch (node.type) {
+			case 'text':
+			case 'code':
+				return typeof node.text === 'string';
+			case 'strong':
+			case 'em':
+				return isInlineList(node.children, depth + 1, counter);
+			case 'link':
+				return typeof node.href === 'string' && /^https?:\/\//i.test(node.href) && isInlineList(node.children, depth + 1, counter);
+			case 'image':
+				return typeof node.alt === 'string' && typeof node.src === 'string';
+			case 'break':
+				return true;
+			default:
+				return false;
+		}
+	}
+
+	function isBlockNode(node, depth, counter) {
+		if (!node || typeof node !== 'object' || depth > MD_MAX_DEPTH || counter.blocks++ >= MD_MAX_BLOCKS) {
+			return false;
+		}
+		switch (node.type) {
+			case 'heading':
+				return typeof node.level === 'number' && node.level >= 1 && node.level <= 6 && isInlineList(node.children, depth + 1, counter);
+			case 'paragraph':
+				return isInlineList(node.children, depth, counter);
+			case 'code':
+				return typeof node.text === 'string';
+			case 'list':
+				return typeof node.ordered === 'boolean' && typeof node.start === 'number'
+					&& Array.isArray(node.items)
+					&& node.items.every(function (item) {
+						return Array.isArray(item) && item.every(function (child) {
+							return isBlockNode(child, depth + 1, counter);
+						});
+					});
+			case 'blockquote':
+				return Array.isArray(node.blocks) && node.blocks.every(function (child) {
+					return isBlockNode(child, depth + 1, counter);
+				});
+			case 'table':
+				return Array.isArray(node.header) && Array.isArray(node.rows)
+					&& node.header.every(function (cell) { return isInlineList(cell, depth + 1, counter); })
+					&& node.rows.every(function (row) {
+						return Array.isArray(row) && row.every(function (cell) {
+							return isInlineList(cell, depth + 1, counter);
+						});
+					});
+			case 'hr':
+				return true;
+			default:
+				return false;
+		}
+	}
+
+	function isMarkdownBlocks(blocks) {
+		const counter = { nodes: 0, blocks: 0 };
+		return Array.isArray(blocks) && blocks.length <= MD_MAX_BLOCKS && blocks.every(function (block) {
+			return isBlockNode(block, 0, counter);
+		});
+	}
+
 	function isHostFrame(message) {
 		if (!message || typeof message !== 'object' || typeof message.type !== 'string') {
 			return false;
@@ -30,7 +107,7 @@
 			case 'state':
 				return typeof message.streaming === 'boolean';
 			case 'assistantMarkdown':
-				return typeof message.messageId === 'string' && message.messageId.length > 0 && Array.isArray(message.blocks);
+				return typeof message.messageId === 'string' && message.messageId.length > 0 && isMarkdownBlocks(message.blocks);
 			case 'assistantDone':
 				return true;
 			case 'assistantError':
@@ -316,7 +393,7 @@
 			}
 			if (item.kind === 'tool') {
 				messagesEl.appendChild(createToolEntry(String(item.name || ''), String(item.args || ''), String(item.summary || ''), !!item.isError));
-			} else if (item.kind === 'assistant' && typeof item.id === 'string' && item.id.length > 0 && Array.isArray(item.blocks)) {
+			} else if (item.kind === 'assistant' && typeof item.id === 'string' && item.id.length > 0 && isMarkdownBlocks(item.blocks)) {
 				const container = getAssistantContainer(item.id);
 				renderBlocks(item.blocks, container, item.id);
 			} else if (item.kind === 'user' || item.kind === 'assistant' || item.kind === 'notice') {
