@@ -10,6 +10,7 @@ import { registerCommands } from './commands';
 import { maybeAutoDiscover, registerDiscovery } from './discovery';
 import { registerExportImport } from './exportImport';
 import { providerFor } from './providerRuntime';
+import { registerSafetyCommand } from './safetyCommands';
 import { KeyStore, VscodeSecretBackend } from './secrets';
 import { readActiveModel, readActiveProviderId, readProviders } from './settings';
 import { StatusBar } from './statusBar';
@@ -80,5 +81,6 @@ export function activate(context: vscode.ExtensionContext): void {
 	registerCommands(context, { keyStore, statusBar });
 	registerDiscovery(context);
 	registerExportImport(context, { keyStore, statusBar });
+	registerSafetyCommand(context);
 	void maybeAutoDiscover(context);
 }

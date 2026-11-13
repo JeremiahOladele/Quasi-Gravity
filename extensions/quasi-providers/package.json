@@ -25,7 +25,8 @@
     "onCommand:quasi.provider.test",
     "onCommand:quasi.discovery.detectLocalModels",
     "onCommand:quasi.settings.export",
-    "onCommand:quasi.settings.import"
+    "onCommand:quasi.settings.import",
+    "onCommand:quasi.settings.setSafetyProfile"
   ],
   "contributes": {
     "commands": [
@@ -87,6 +88,11 @@
       {
         "command": "quasi.settings.import",
         "title": "Quasi: Import Settings",
+        "category": "Quasi"
+      },
+      {
+        "command": "quasi.settings.setSafetyProfile",
+        "title": "Quasi: Set Safety Profile",
         "category": "Quasi"
       }
     ],
@@ -172,7 +178,42 @@
           "type": "object",
           "scope": "application",
           "default": {},
-          "description": "Default provider/model and future agent defaults. Imported files may only set keys this build knows (none until a later milestone)."
+          "description": "Device-local safety defaults for the future agent. These are never exported or imported.",
+          "properties": {
+            "profile": {
+              "type": "string",
+              "enum": [
+                "safe",
+                "balanced",
+                "autonomous",
+                "custom"
+              ],
+              "default": "safe",
+              "description": "Safety profile preset. 'custom' means the permissions no longer match a preset."
+            },
+            "permissions": {
+              "type": "object",
+              "default": {},
+              "description": "Safety permissions that are actually enforced.",
+              "properties": {
+                "askBeforeTerminal": {
+                  "type": "string",
+                  "enum": [
+                    "always",
+                    "unlisted",
+                    "never"
+                  ],
+                  "default": "always",
+                  "description": "Ask before terminal commands. 'unlisted' runs allowlisted commands without asking (none yet, so it prompts); 'never' runs without asking."
+                },
+                "askBeforeWriteOutsideWorkspace": {
+                  "type": "boolean",
+                  "default": true,
+                  "description": "Ask before writing outside the workspace."
+                }
+              }
+            }
+          }
         }
       }
     }
