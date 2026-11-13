@@ -1,0 +1,66 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+import * as vscode from 'vscode';
+
+export type ConnectionState = 'online' | 'offline' | 'unknown';
+
+export interface StatusBarInput {
+	readonly hasProviders: boolean;
+	readonly providerName?: string;
+	readonly model?: string;
+}
+
+/** Status bar item showing the active provider/model and connection state. */
+export class StatusBar implements vscode.Disposable {
+
+	private readonly item: vscode.StatusBarItem;
+	private input: StatusBarInput = { hasProviders: false };
+	private state: ConnectionState = 'unknown';
+
+	constructor() {
+		this.item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+		this.render();
+	}
+
+	update(input: StatusBarInput): void {
+		this.input = input;
+		this.render();
+	}
+
+	setState(state: ConnectionState): void {
+		this.state = state;
+		this.render();
+	}
+
+	dispose(): void {
+		this.item.dispose();
+	}
+
+	private render(): void {
+		if (!this.input.hasProviders) {
+			this.item.text = '$(add) Quasi: no model';
+			this.item.tooltip = 'No model provider configured. Click to add one.';
+			this.item.command = 'quasi.provider.add';
+			this.item.show();
+			return;
+		}
+
+		if (!this.input.providerName) {
+			this.item.text = '$(question) Quasi: choose model';
+			this.item.tooltip = 'No active provider selected. Click to choose a model.';
+			this.item.command = 'quasi.provider.selectModel';
+			this.item.show();
+			return;
+		}
+
+		const icon = this.state === 'online' ? '$(check)' : this.state === 'offline' ? '$(debug-disconnect)' : '$(question)';
+		const label = this.input.model ? `${this.input.providerName} · ${this.input.model}` : this.input.providerName;
+		this.item.text = `${icon} ${label}`;
+		this.item.tooltip = `Quasi model: ${label}\nConnection: ${this.state}\nClick to select a model.`;
+		this.item.command = 'quasi.provider.selectModel';
+		this.item.show();
+	}
+}
