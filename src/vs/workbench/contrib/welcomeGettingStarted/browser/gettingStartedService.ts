@@ -183,6 +183,11 @@ export class WalkthroughsService extends Disposable implements IWalkthroughsServ
 
 		walkthroughs.forEach(async (category, index) => {
 
+			// QUASI: remove the "Get started with VS Code" walkthrough from the Welcome page (no accounts/sign-in onboarding).
+			if (category.id === 'Setup') {
+				return;
+			}
+
 			this._registerWalkthrough({
 				...category,
 				icon: { type: 'icon', icon: category.icon },
