@@ -5,7 +5,7 @@
 
 import * as vscode from 'vscode';
 
-export type ConnectionState = 'online' | 'offline' | 'unknown';
+export type ConnectionState = 'online' | 'offline' | 'unknown' | 'rejected';
 
 export interface StatusBarInput {
 	readonly hasProviders: boolean;
@@ -56,10 +56,14 @@ export class StatusBar implements vscode.Disposable {
 			return;
 		}
 
-		const icon = this.state === 'online' ? '$(check)' : this.state === 'offline' ? '$(debug-disconnect)' : '$(question)';
+		const icon = this.state === 'online' ? '$(check)'
+			: this.state === 'offline' ? '$(debug-disconnect)'
+				: this.state === 'rejected' ? '$(error)'
+					: '$(question)';
 		const label = this.input.model ? `${this.input.providerName} · ${this.input.model}` : this.input.providerName;
 		this.item.text = `${icon} ${label}`;
-		this.item.tooltip = `Quasi model: ${label}\nConnection: ${this.state}\nClick for actions.`;
+		const stateText = this.state === 'rejected' ? 'API key rejected' : this.state;
+		this.item.tooltip = `Quasi model: ${label}\nConnection: ${stateText}\nClick for actions.`;
 		this.item.command = 'quasi.provider.menu';
 		this.item.show();
 	}

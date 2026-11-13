@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as vscode from 'vscode';
+import { checkApiKey, KeyCheck, KeyCheckStatus } from '../core/keyCheck';
 import { detectProviderIdsForKey, normalizeKey } from '../core/keyDetect';
 import {
 	addProvider as appendProvider,
@@ -121,15 +122,64 @@ async function addProviderCommand(services: CommandServices): Promise<void> {
 		requiresKey,
 	};
 
-	await writeProviders(appendProvider(providers, config));
-
-	if (requiresKey && key !== undefined) {
-		await storeKey(services, id, key);
+	if (!requiresKey) {
+		// Local servers need no key: save as before, then pick a model.
+		await writeProviders(appendProvider(providers, config));
+		await pickModelForProvider(services, config);
+		void vscode.window.showInformationMessage(`Quasi: provider '${config.name}' added.`);
+		return;
 	}
 
-	// Presets no longer hardcode a default model: always let the user pick one.
-	await pickModelForProvider(services, config);
+	if (key === undefined) {
+		return;
+	}
 
+	// Key-requiring provider: verify and choose a model with the in-memory key,
+	// and only persist (provider + key) after a model is selected.
+	const listed = await listModelsWithKey(config, key);
+	if (!listed.ok) {
+		if (listed.status === 401 || listed.status === 403) {
+			await offerSetApiKey(config.name);
+			return;
+		}
+		if (listed.status !== 404 && listed.status !== 405) {
+			void vscode.window.showErrorMessage(`Quasi: could not reach '${hostOf(baseUrl) ?? baseUrl}'. Nothing was saved. ${listed.message ?? ''}`);
+			return;
+		}
+		// 404/405: no /models endpoint; fall through so the user can enter one.
+	}
+
+	const keyStatus = (await checkApiKey(keyCheckForBaseUrl(preset, baseUrl), key)).status;
+	if (keyStatus === 'rejected') {
+		void vscode.window.showErrorMessage(`Quasi: the API key was rejected by '${hostOf(baseUrl) ?? baseUrl}'. Nothing was saved.`);
+		return;
+	}
+	reportKeyStatus(keyStatus);
+
+	const model = await chooseModelId(config.name, listed.models, undefined);
+	if (model === undefined) {
+		return; // cancelled: save nothing
+	}
+
+	if (keyStatus !== 'verified') {
+		const outcome = await maybeVerifyWithMessage(config, key, model);
+		if (outcome === 'rejected') {
+			void vscode.window.showErrorMessage('Quasi: the API key was rejected by the test message. Nothing was saved.');
+			return;
+		}
+		if (outcome === 'error') {
+			void vscode.window.showErrorMessage('Quasi: the verification message failed. Nothing was saved.');
+			return;
+		}
+		if (outcome === 'verified') {
+			void vscode.window.showInformationMessage('Quasi: key verified.');
+		}
+	}
+
+	await writeProviders(appendProvider(providers, config));
+	await storeKey(services, id, key);
+	await writeActiveProviderId(id);
+	await writeActiveModel(model);
 	void vscode.window.showInformationMessage(`Quasi: provider '${config.name}' added.`);
 }
 
@@ -177,33 +227,48 @@ async function quickAddCommand(services: CommandServices): Promise<void> {
 		requiresKey: true,
 	};
 
-	// Test + list models with the in-memory key only. It is not persisted yet,
-	// and it is never sent to any host other than the one just confirmed.
-	const provider = createProvider(tempConfig, async () => key);
-	let models: ModelInfo[] = [];
-	const controller = new AbortController();
-	const timeout = setTimeout(() => controller.abort(), 6000);
-	try {
-		models = await provider.listModels(controller.signal);
-	} catch (err) {
-		if (err instanceof ProviderError && err.status === 401) {
-			void vscode.window.showErrorMessage('Quasi: the API key was rejected (401). Nothing was saved.');
+	// List models with the in-memory key only. This is never persisted yet, and
+	// the key is never sent anywhere but the host just confirmed above.
+	const listed = await listModelsWithKey(tempConfig, key);
+	if (!listed.ok) {
+		if (listed.status === 401 || listed.status === 403) {
+			await offerSetApiKey(tempConfig.name);
 			return;
 		}
-		if (!(err instanceof ProviderError && (err.status === 404 || err.status === 405))) {
-			const message = err instanceof Error ? err.message : String(err);
-			void vscode.window.showErrorMessage(`Quasi: could not connect to '${hostOf(baseUrl) ?? baseUrl}'. Nothing was saved. ${message}`);
+		if (listed.status !== 404 && listed.status !== 405) {
+			void vscode.window.showErrorMessage(`Quasi: could not connect to '${hostOf(baseUrl) ?? baseUrl}'. Nothing was saved. ${listed.message ?? ''}`);
 			return;
 		}
 		// 404/405: the server does not expose /models; offer manual model entry.
-		models = [];
-	} finally {
-		clearTimeout(timeout);
 	}
 
-	const model = await chooseModelId(preset.config.name, models, undefined);
+	// A model list alone does not prove the key is valid. Only claim success if
+	// an authenticated check passed.
+	const keyStatus = (await checkApiKey(keyCheckForBaseUrl(preset, baseUrl), key)).status;
+	if (keyStatus === 'rejected') {
+		void vscode.window.showErrorMessage(`Quasi: the API key was rejected by '${hostOf(baseUrl) ?? baseUrl}'. Nothing was saved.`);
+		return;
+	}
+	reportKeyStatus(keyStatus);
+
+	const model = await chooseModelId(preset.config.name, listed.models, undefined);
 	if (model === undefined) {
 		return; // cancelled: discard the in-memory key, save nothing
+	}
+
+	if (keyStatus !== 'verified') {
+		const outcome = await maybeVerifyWithMessage(tempConfig, key, model);
+		if (outcome === 'rejected') {
+			void vscode.window.showErrorMessage('Quasi: the API key was rejected by the test message. Nothing was saved.');
+			return;
+		}
+		if (outcome === 'error') {
+			void vscode.window.showErrorMessage('Quasi: the verification message failed. Nothing was saved.');
+			return;
+		}
+		if (outcome === 'verified') {
+			void vscode.window.showInformationMessage('Quasi: key verified.');
+		}
 	}
 
 	// The key and provider are only persisted now, after the user confirmed a model.
@@ -426,11 +491,12 @@ async function pickModelForProvider(services: CommandServices, provider: Provide
 		models = await providerFor(provider, services.keyStore).listModels(controller.signal);
 		services.statusBar.setState('online');
 	} catch (err) {
-		services.statusBar.setState('offline');
-		if (err instanceof ProviderError && err.status === 401) {
-			void vscode.window.showErrorMessage(`Quasi: the API key for '${provider.name}' was rejected (401). Set it with "Quasi: Set API Key".`);
+		if (err instanceof ProviderError && (err.status === 401 || err.status === 403)) {
+			services.statusBar.setState('rejected');
+			await offerSetApiKey(provider.name);
 			return;
 		}
+		services.statusBar.setState('offline');
 		// 404/405/other: fall through to manual model entry.
 	} finally {
 		clearTimeout(timeout);
@@ -597,6 +663,12 @@ async function testProviderCommand(services: CommandServices, output: vscode.Out
 				case 'error':
 					output.appendLine('');
 					output.appendLine(`[error] ${chunk.message}`);
+					if (chunk.status === 401 || chunk.status === 403) {
+						if (readActiveProviderId() === provider.id) {
+							services.statusBar.setState('rejected');
+						}
+						void offerSetApiKey(provider.name);
+					}
 					break;
 			}
 		}
@@ -609,6 +681,84 @@ async function testProviderCommand(services: CommandServices, output: vscode.Out
 //#endregion
 
 //#region Helpers
+
+interface ListModelsOutcome {
+	readonly ok: boolean;
+	readonly models: ModelInfo[];
+	readonly status?: number;
+	readonly message?: string;
+}
+
+/** List models using an in-memory key (never persisted). */
+async function listModelsWithKey(config: ProviderConfig, key: string | undefined, timeoutMs = 6000): Promise<ListModelsOutcome> {
+	const provider = createProvider(config, async () => key);
+	const controller = new AbortController();
+	const timeout = setTimeout(() => controller.abort(), timeoutMs);
+	try {
+		const models = await provider.listModels(controller.signal);
+		return { ok: true, models };
+	} catch (err) {
+		if (err instanceof ProviderError) {
+			return { ok: false, models: [], status: err.status, message: err.message };
+		}
+		return { ok: false, models: [], message: err instanceof Error ? err.message : String(err) };
+	} finally {
+		clearTimeout(timeout);
+	}
+}
+
+/** Only use a preset's key check if the base URL host was not changed. */
+function keyCheckForBaseUrl(preset: ProviderPreset, baseUrl: string): KeyCheck | undefined {
+	if (!preset.keyCheck) {
+		return undefined;
+	}
+	return hostOf(preset.config.baseUrl) === hostOf(baseUrl) ? preset.keyCheck : undefined;
+}
+
+function reportKeyStatus(status: KeyCheckStatus): void {
+	if (status === 'verified') {
+		void vscode.window.showInformationMessage('Quasi: key verified.');
+	} else {
+		void vscode.window.showInformationMessage('Quasi: model list loaded, but it did not confirm your key. It will be checked on your first message.');
+	}
+}
+
+type VerifyOutcome = 'verified' | 'rejected' | 'skipped' | 'error';
+
+/** Opt-in, potentially-costly verification by sending a one-token message. */
+async function maybeVerifyWithMessage(config: ProviderConfig, key: string, model: string): Promise<VerifyOutcome> {
+	const verify = 'Verify key with a test message (may use a few tokens)';
+	const choice = await vscode.window.showQuickPick([verify, 'Skip verification'], { placeHolder: 'This key is not verified yet' });
+	if (choice !== verify) {
+		return 'skipped';
+	}
+
+	const provider = createProvider(config, async () => key);
+	const controller = new AbortController();
+	const timeout = setTimeout(() => controller.abort(), 15000);
+	try {
+		for await (const chunk of provider.chat({ model, messages: [{ role: 'user', content: 'ping' }], maxTokens: 1 })) {
+			if (chunk.type === 'error') {
+				return chunk.status === 401 || chunk.status === 403 ? 'rejected' : 'error';
+			}
+			if (chunk.type === 'text' || chunk.type === 'done') {
+				return 'verified';
+			}
+		}
+		return 'error';
+	} catch {
+		return 'error';
+	} finally {
+		clearTimeout(timeout);
+	}
+}
+
+async function offerSetApiKey(providerName: string): Promise<void> {
+	const action = await vscode.window.showErrorMessage(`Quasi: the API key for '${providerName}' was rejected.`, 'Set API Key');
+	if (action === 'Set API Key') {
+		await vscode.commands.executeCommand('quasi.provider.setKey');
+	}
+}
 
 /** Picker description for a preset, including doc-verification caveats. */
 function describePreset(preset: ProviderPreset): string {
