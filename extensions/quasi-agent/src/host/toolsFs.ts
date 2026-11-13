@@ -8,7 +8,7 @@ import * as vscode from 'vscode';
 import { resolveSandboxPath } from '../core/tools/pathPolicy';
 import { ToolDef, ToolResult } from '../core/tools/registry';
 import { isSensitivePath } from '../core/tools/secretFiles';
-import { isRealPathOutside } from './symlinks';
+import { isPathInside, realPathOrUndefined } from './symlinks';
 
 const CASE_INSENSITIVE = process.platform === 'win32' || process.platform === 'darwin';
 const MAX_READ_BYTES = 256 * 1024;
@@ -57,6 +57,16 @@ function relativeFromRoot(rootPath: string, uri: vscode.Uri): string | undefined
 
 export function createReadTools(rootUri: vscode.Uri): ToolDef[] {
 	const rootPath = rootUri.fsPath;
+	let realRootPromise: Promise<string | undefined> | undefined;
+	const getRealRoot = (): Promise<string | undefined> => (realRootPromise ??= realPathOrUndefined(rootPath));
+	const resolvesOutside = async (absolute: string): Promise<boolean> => {
+		const realRoot = await getRealRoot();
+		const realCandidate = await realPathOrUndefined(absolute);
+		if (!realRoot || !realCandidate) {
+			return false;
+		}
+		return !isPathInside(realRoot, realCandidate, CASE_INSENSITIVE);
+	};
 
 	const readFile: ToolDef = {
 		name: 'read_file',
@@ -77,7 +87,7 @@ export function createReadTools(rootUri: vscode.Uri): ToolDef[] {
 			const candidate = typeof args.path === 'string' ? args.path : '';
 			const resolution = resolveSandboxPath(rootPath, candidate, CASE_INSENSITIVE);
 			const absolute = absoluteFor(rootPath, candidate);
-			if (resolution.outsideWorkspace || await isRealPathOutside(rootPath, absolute, CASE_INSENSITIVE)) {
+			if (resolution.outsideWorkspace || await resolvesOutside(absolute)) {
 				return { toolName: 'read_file', reason: 'outside-workspace', detail: absolute };
 			}
 			if (resolution.ok && isSensitivePath(resolution.relativePath ?? '')) {
@@ -136,7 +146,7 @@ export function createReadTools(rootUri: vscode.Uri): ToolDef[] {
 			const candidate = typeof args.path === 'string' && args.path.length > 0 ? args.path : '.';
 			const resolution = resolveSandboxPath(rootPath, candidate, CASE_INSENSITIVE);
 			const absolute = absoluteFor(rootPath, candidate);
-			if (resolution.outsideWorkspace || await isRealPathOutside(rootPath, absolute, CASE_INSENSITIVE)) {
+			if (resolution.outsideWorkspace || await resolvesOutside(absolute)) {
 				return { toolName: 'list_dir', reason: 'outside-workspace', detail: absolute };
 			}
 			return undefined;
@@ -196,7 +206,7 @@ export function createReadTools(rootUri: vscode.Uri): ToolDef[] {
 			const matches: string[] = [];
 			let scannedFiles = 0;
 			let scannedBytes = 0;
-			let incomplete = false;
+			let incomplete = files.length >= MAX_SEARCH_FILES;
 
 			for (const file of files) {
 				if (signal.aborted) {
@@ -213,6 +223,10 @@ export function createReadTools(rootUri: vscode.Uri): ToolDef[] {
 					continue;
 				}
 				if (isSensitivePath(relative)) {
+					continue;
+				}
+				if (await resolvesOutside(file.fsPath)) {
+					incomplete = true;
 					continue;
 				}
 				try {
