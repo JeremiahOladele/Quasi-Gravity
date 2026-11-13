@@ -113,6 +113,10 @@ Rules for these interfaces:
 - Handle base URLs with or without a trailing `/v1` or slash sensibly
   (DeepSeek uses `https://api.deepseek.com`; Ollama uses
   `http://localhost:11434/v1`).
+  Decision: append `/v1` only when the base URL has no path; URLs that already
+  have a path (for example `/v1beta/openai` or `/inference/v1`) are used as-is.
+  A `baseUrlIsExact` flag was considered but is not needed (Perplexity was
+  omitted because its OpenAI-compatible base is not stable).
 - Unit tests for the SSE parser and adapter with mocked `fetch`: normal stream,
   tool calls split across chunks, 401, 429, network failure, abort.
 - Add a temporary command **Quasi: Test Provider (dev)** that prompts for a
@@ -142,6 +146,11 @@ Rules for these interfaces:
   auto-add without confirmation. Never scan beyond localhost.
 - Ollama niceties via its native API when `apiType` is `ollama` or auto-detected:
   list models with `/api/tags`; read capabilities where available.
+  Decision: new Ollama providers (preset and discovery) use `apiType: 'ollama'`
+  with an `OllamaProvider` whose chat stays on the OpenAI-compatible adapter;
+  native `/api/tags` and `/api/show` are metadata-only and fall back to the
+  OpenAI-compatible model list. Existing `openai-compat` Ollama providers keep
+  working unchanged.
 - Capability detection: use what the server reports; otherwise conservative
   defaults (tools: false unless known). Let the user override per provider.
   Surface "this model may not support tools" as a clear warning, because Phase 2
