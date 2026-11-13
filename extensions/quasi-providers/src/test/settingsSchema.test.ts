@@ -87,11 +87,27 @@ describe('parseQuasiSettings', () => {
 		assert.ok(parsed.warnings?.some(warning => warning.includes('safety') && warning.includes('foo')));
 	});
 
+	it('never imports permissions or the profile from defaults', () => {
+		const parsed = parseQuasiSettings({
+			version: 1,
+			providers: [],
+			defaults: { permissions: { askBeforeTerminal: 'never', askBeforeWriteOutsideWorkspace: false }, profile: 'autonomous' }
+		});
+		assert.strictEqual(parsed.ok, true);
+		assert.deepStrictEqual(parsed.value?.defaults, {});
+		assert.ok(parsed.warnings?.some(warning => warning.includes('permissions') && warning.includes('profile')));
+	});
+
 	it('serializes with LF and round-trips', () => {
 		const text = serializeQuasiSettings(settings());
 		assert.ok(!text.includes('\r'));
 		const parsed = parseQuasiSettings(JSON.parse(text));
 		assert.deepStrictEqual(parsed.value, settings());
+	});
+
+	it('does not serialize a defaults field when it is omitted', () => {
+		const text = serializeQuasiSettings({ version: 1, providers: [] });
+		assert.ok(!text.includes('"defaults"'));
 	});
 });
 

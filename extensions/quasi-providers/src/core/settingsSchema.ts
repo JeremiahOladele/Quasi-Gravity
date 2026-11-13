@@ -9,15 +9,17 @@ import { ProviderConfig } from './types';
 export const SETTINGS_VERSION = 1;
 
 /**
- * Keys under `defaults` that may be imported. Empty until M5 defines the shape.
- * Everything else is dropped, so an imported file cannot set safety defaults.
+ * Keys under `defaults` that may be imported. Always empty: safety defaults are
+ * device-local and must never be set by an imported file. Everything is dropped
+ * and reported so an import cannot change permissions or the profile.
  */
 const KNOWN_DEFAULTS_KEYS: ReadonlySet<string> = new Set<string>();
 
 export interface QuasiSettingsV1 {
 	readonly version: 1;
 	readonly providers: ProviderConfig[];
-	readonly defaults: Record<string, unknown>;
+	/** Present only when parsing; never written to an export file. */
+	readonly defaults?: Record<string, unknown>;
 	readonly activeProviderId?: string;
 	readonly activeModel?: string;
 }
@@ -108,7 +110,7 @@ export function parseQuasiSettings(raw: unknown): ParseSettingsResult {
 			const filtered = filterKnownDefaults(record.defaults);
 			defaults = filtered.value;
 			if (filtered.dropped.length > 0) {
-				warnings.push(`dropped unknown defaults key(s): ${filtered.dropped.join(', ')}`);
+				warnings.push(`dropped non-importable defaults key(s): ${filtered.dropped.join(', ')} (device-local safety defaults are never imported)`);
 			}
 		}
 	}
