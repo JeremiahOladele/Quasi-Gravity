@@ -1,0 +1,114 @@
+name: Quasi Windows build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - codex/windows-build
+    paths:
+      - .github/workflows/quasi-windows-build.yml
+      - build/win32/code.iss
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quasi-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 180
+    env:
+      CI: 'true'
+      VSCODE_ARCH: x64
+      NODE_OPTIONS: --max-old-space-size=6144
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Check out Quasi-Gravity
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up the pinned Node.js version
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+
+      - name: Set up the pinned package manager
+        run: |
+          $packageManager = (Get-Content package.json -Raw | ConvertFrom-Json).packageManager
+          npm install --global $packageManager
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm --version
+
+      - name: Install dependencies without changing lockfiles
+        run: pnpm install --frozen-lockfile
+
+      - name: Compile Quasi extensions
+        run: pnpm run gulp compile-extension:quasi-providers compile-extension:quasi-agent
+
+      - name: Test Quasi extensions
+        run: |
+          pnpm exec mocha 'extensions/quasi-providers/out/test/**/*.test.js' 'extensions/quasi-agent/out/test/**/*.test.js'
+
+      - name: Build Windows x64 application
+        run: pnpm run gulp vscode-win32-x64-min
+
+      - name: Verify packaged Quasi extensions and identity
+        run: |
+          $app = Join-Path (Split-Path $env:GITHUB_WORKSPACE) 'VSCode-win32-x64'
+          $resources = Join-Path $app 'resources/app'
+          $required = @(
+            'extensions/quasi-providers/out/host/extension.js',
+            'extensions/quasi-providers/media/empty.md',
+            'extensions/quasi-agent/out/host/extension.js',
+            'extensions/quasi-agent/out/webview/main.js',
+            'extensions/quasi-agent/out/webview/main.css'
+          )
+          foreach ($relative in $required) {
+            if (!(Test-Path -LiteralPath (Join-Path $resources $relative))) {
+              throw "Missing packaged file: $relative"
+            }
+          }
+          $product = Get-Content (Join-Path $resources 'product.json') -Raw | ConvertFrom-Json
+          if ($product.applicationName -ne 'quasi-gravity' -or $product.enableTelemetry -ne $false) {
+            throw 'Packaged identity or telemetry configuration is incorrect.'
+          }
+          if (!(Test-Path -LiteralPath (Join-Path $app 'Quasi-Gravity.exe'))) {
+            throw 'Quasi-Gravity.exe is missing.'
+          }
+
+      - name: Build per-user installer
+        run: |
+          pnpm run gulp vscode-win32-x64-inno-updater
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm run gulp vscode-win32-x64-user-setup
+
+      - name: Package downloads and checksums
+        run: |
+          $app = Join-Path (Split-Path $env:GITHUB_WORKSPACE) 'VSCode-win32-x64'
+          $downloads = Join-Path $env:RUNNER_TEMP 'quasi-downloads'
+          New-Item -ItemType Directory -Path $downloads -Force | Out-Null
+          # A data directory enables Electron/Code OSS portable mode.
+          New-Item -ItemType Directory -Path (Join-Path $app 'data') -Force | Out-Null
+          Compress-Archive -Path (Join-Path $app '*') -DestinationPath (Join-Path $downloads 'Quasi-Gravity-win32-x64-portable.zip')
+          Copy-Item -LiteralPath '.build/win32-x64/user-setup/Quasi-GravitySetup.exe' -Destination (Join-Path $downloads 'Quasi-Gravity-win32-x64-Setup.exe')
+          Copy-Item -LiteralPath 'docs/WINDOWS-BUILDS.md' -Destination (Join-Path $downloads 'TESTING.md')
+          $checksums = Get-ChildItem -LiteralPath $downloads -File | Sort-Object Name | ForEach-Object {
+            $hash = Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256
+            "$($hash.Hash.ToLowerInvariant())  $($_.Name)"
+          }
+          $checksums | Set-Content -LiteralPath (Join-Path $downloads 'SHA256SUMS.txt') -Encoding utf8
+          "Built commit: $env:GITHUB_SHA" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+
+      - name: Upload Windows downloads
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: Quasi-Gravity-win32-x64-${{ github.run_number }}
+          path: ${{ runner.temp }}/quasi-downloads/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30

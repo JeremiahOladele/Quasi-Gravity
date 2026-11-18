@@ -8,14 +8,15 @@
 AppId={#AppId}
 AppName={#NameLong}
 AppVerName={#NameVersion}
-AppPublisher=Microsoft Corporation
-AppPublisherURL=https://code.visualstudio.com/
-AppSupportURL=https://code.visualstudio.com/
-AppUpdatesURL=https://code.visualstudio.com/
+; QUASI: identify the fork and direct installer links to its own repository.
+AppPublisher=Quasi-Gravity
+AppPublisherURL=https://github.com/JeremiahOladele/Quasi-Gravity
+AppSupportURL=https://github.com/JeremiahOladele/Quasi-Gravity/issues
+AppUpdatesURL=https://github.com/JeremiahOladele/Quasi-Gravity/releases
 DefaultGroupName={#NameLong}
 AllowNoIcons=yes
 OutputDir={#OutputDir}
-OutputBaseFilename=VSCodeSetup
+OutputBaseFilename=Quasi-GravitySetup
 Compression=lzma
 SolidCompression=yes
 AppMutex={code:GetAppMutex}
