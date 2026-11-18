@@ -44,6 +44,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pnpm --version
 
+      - name: Add Windows SDK tools to PATH
+        run: |
+          $sdkBin = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits/10/bin'
+          $signTool = Get-ChildItem -Path (Join-Path $sdkBin '*/x64/signtool.exe') |
+            Sort-Object FullName -Descending | Select-Object -First 1
+          if (!$signTool) { throw 'The Windows SDK signtool.exe was not found.' }
+          $signTool.DirectoryName | Out-File -FilePath $env:GITHUB_PATH -Append
+
       - name: Install dependencies without changing lockfiles
         run: pnpm install --frozen-lockfile
 
