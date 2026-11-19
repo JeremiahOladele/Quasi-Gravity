@@ -88,6 +88,8 @@ jobs:
           if (!(Test-Path -LiteralPath (Join-Path $app 'Quasi-Gravity.exe'))) {
             throw 'Quasi-Gravity.exe is missing.'
           }
+          & (Join-Path $app 'bin/quasi-gravity.cmd') --version
+          if ($LASTEXITCODE -ne 0) { throw 'The packaged application version check failed.' }
 
       - name: Build per-user installer
         run: |
@@ -102,7 +104,16 @@ jobs:
           New-Item -ItemType Directory -Path $downloads -Force | Out-Null
           # A data directory enables Electron/Code OSS portable mode.
           New-Item -ItemType Directory -Path (Join-Path $app 'data') -Force | Out-Null
+          # Compress-Archive omits empty directories, so retain a small marker.
+          'Portable user data is stored here. Do not share this folder after entering personal keys.' |
+            Set-Content -LiteralPath (Join-Path $app 'data/README.txt') -Encoding utf8
           Compress-Archive -Path (Join-Path $app '*') -DestinationPath (Join-Path $downloads 'Quasi-Gravity-win32-x64-portable.zip')
+          $archive = [System.IO.Compression.ZipFile]::OpenRead((Join-Path $downloads 'Quasi-Gravity-win32-x64-portable.zip'))
+          try {
+            if (!$archive.GetEntry('data/README.txt')) { throw 'The ZIP is missing its portable data directory.' }
+          } finally {
+            $archive.Dispose()
+          }
           Copy-Item -LiteralPath '.build/win32-x64/user-setup/Quasi-GravitySetup.exe' -Destination (Join-Path $downloads 'Quasi-Gravity-win32-x64-Setup.exe')
           Copy-Item -LiteralPath 'docs/WINDOWS-BUILDS.md' -Destination (Join-Path $downloads 'TESTING.md')
           $checksums = Get-ChildItem -LiteralPath $downloads -File | Sort-Object Name | ForEach-Object {
